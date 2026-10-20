@@ -1,0 +1,40 @@
+{
+  "name": "@belaykit/rulebook",
+  "version": "0.1.0",
+  "description": "BelayKit rulebooks: sections of YAML + CEL rules, checked at load against the agent's registry, as a ChoiceProvider.",
+  "license": "MIT",
+  "author": "Christian Sepulveda <dev@justideas.io>",
+  "type": "module",
+  "files": ["*.js", "*.d.ts", "schema.json"],
+  "engines": { "node": ">=20.19" },
+  "repository": { "type": "git", "url": "git+https://github.com/csepulv/belaykit.git", "directory": "packages/rulebook" },
+  "homepage": "https://github.com/csepulv/belaykit#readme",
+  "bugs": { "url": "https://github.com/csepulv/belaykit/issues" },
+  "keywords": ["agent", "agents", "rules", "rulebook", "cel", "yaml", "llm"],
+  "publishConfig": { "access": "public" },
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    }
+  },
+  "bin": {
+    "belaykit-rulebook": "./cli.js"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@marcbachmann/cel-js": "^8.0.0",
+    "ajv": "^8.20.0",
+    "safe-regex2": "^5.1.2",
+    "yaml": "^2.9.1"
+  },
+  "peerDependencies": {
+    "@belaykit/core": "^0.1.0"
+  },
+  "devDependencies": {
+    "@belaykit/core": "workspace:*",
+    "vitest": "^4.1.0"
+  }
+}

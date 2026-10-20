@@ -1,0 +1,47 @@
+# The doc-processor's decisions as a rulebook. Run with @belaykit/rulebook and the registry in
+# src/registry.js; the code check (accept | re-segment | fail) follows it in a chain
+# (src/agent-rulebook.js). Compare src/agent-code.js, which makes the same decisions in code.
+#
+# A section claims the working set when its `when` holds; the first that does decides the
+# iteration. Review comes before classify, so each snippet is reviewed as soon as it is
+# classified. Every review rule applies only to the snippet waiting for review
+# (doc_waiting), so they all act on the same one, whatever state a run starts from.
+version: 1
+hitPolicyDefault: FIRST
+sections:
+  - name: segment
+    when: ws.accepted == null && ws.failed == null
+    needs:
+      segmentation: segment_document
+
+  - name: review
+    when: ws.accepted == true && ws.snippets.exists(s, doc_waiting(s, ws.snippets))
+    hitPolicy: ALL
+    rules:
+      - id: drop_unknown_topics
+        selectFirst: { snippet: ws.snippets }
+        when: doc_waiting(snippet, ws.snippets) && doc_outside(snippet.classification.topics, ws.topic_slugs)
+        then: { action: drop_unknown_topics }
+        why: the classifier named a topic the map doesn't have
+      - id: flag_ambiguity
+        selectFirst: { snippet: ws.snippets }
+        when: doc_waiting(snippet, ws.snippets) && snippet.classification.ambiguity != ""
+        then: { action: flag_ambiguity }
+        why: the classifier couldn't choose a topic
+      - id: flag_new_themes
+        selectFirst: { snippet: ws.snippets }
+        when: doc_waiting(snippet, ws.snippets) && doc_outside(snippet.classification.themes, ws.theme_slugs)
+        then: { action: flag_new_themes }
+        why: the classifier coined a theme outside the map
+      - id: mark_reviewed
+        selectFirst: { snippet: ws.snippets }
+        when: doc_waiting(snippet, ws.snippets)
+        then: { action: mark_reviewed }
+
+  - name: classify
+    when: ws.accepted == true && ws.snippets.exists(s, s.classification == null && s.error == null)
+    rules:
+      - id: classify
+        selectFirst: { snippet: ws.snippets }
+        when: snippet.classification == null && snippet.error == null
+        then: { action: classify_snippet }

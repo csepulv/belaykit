@@ -1,0 +1,9 @@
+version: 1
+sections:
+  - name: triage
+    when: app_state(ws, "item") == "present"
+    needs:
+      classification: classify_item
+    rules:
+      - when: '!app_isBlank(ws.item)'
+        then: { action: flag }

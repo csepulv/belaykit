@@ -1,0 +1,3 @@
+initial: { item: "server down", routing: null }
+produce: { classification: { urgent: true } }
+expect: { status: completed, fired: ["gather classification", "urgent"], result: { routing: escalate } }

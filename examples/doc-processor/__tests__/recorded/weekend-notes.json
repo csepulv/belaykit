@@ -1,0 +1,26 @@
+{
+  "segmentations": [
+    {
+      "snippets": [
+        { "ranges": [{ "start": 3, "end": 3 }] },
+        { "ranges": [{ "start": 5, "end": 5 }] }
+      ],
+      "structural": [1],
+      "skipped": []
+    },
+    {
+      "snippets": [
+        { "ranges": [{ "start": 3, "end": 3 }] },
+        { "ranges": [{ "start": 5, "end": 5 }] },
+        { "ranges": [{ "start": 7, "end": 7 }] }
+      ],
+      "structural": [1],
+      "skipped": []
+    }
+  ],
+  "classifications": [
+    { "topics": ["photography"], "type": "note", "themes": ["analog_revival"], "ambiguity": "" },
+    { "topics": ["books", "movies"], "type": "idea", "themes": ["adaptations"], "ambiguity": "" },
+    { "topics": ["photography"], "type": "task", "themes": ["gear"], "ambiguity": "" }
+  ]
+}

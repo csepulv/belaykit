@@ -1,0 +1,31 @@
+# The review rules, on three snippets the classifier has already answered for: one in the
+# map, one outside it with an ambiguity, one with a new theme. No model is called.
+initial:
+  document: "(already segmented)"
+  topic_slugs: [photography, books, music, movies]
+  theme_slugs: [analog_revival, adaptations, criticism, gear, collecting]
+  retries: 0
+  feedback: []
+  accepted: true
+  failed: null
+  flags: []
+  snippets:
+    - { n: 1, header: Listening, text: "- The quiet tracks hold up.", error: null, reviewed: false,
+        classification: { topics: [music], type: review, themes: [], ambiguity: "" } }
+    - { n: 2, header: Questions, text: "2. Which podcast reviewed the tour?", error: null, reviewed: false,
+        classification: { topics: [podcasts], type: question, themes: [criticism], ambiguity: "music, or podcasts?" } }
+    - { n: 3, header: Ideas, text: "- Pick a soundtrack each month.", error: null, reviewed: false,
+        classification: { topics: [music, movies], type: idea, themes: [film_scores], ambiguity: "" } }
+expect:
+  status: completed
+  fired: [mark_reviewed, drop_unknown_topics, flag_ambiguity, mark_reviewed, flag_new_themes, mark_reviewed]
+  result:
+    snippets:
+      - { n: 1, header: Listening, text: "- The quiet tracks hold up.", topics: [music], type: review, themes: [], error: null }
+      - { n: 2, header: Questions, text: "2. Which podcast reviewed the tour?", topics: [], type: question, themes: [criticism], error: null }
+      - { n: 3, header: Ideas, text: "- Pick a soundtrack each month.", topics: [music, movies], type: idea, themes: [film_scores], error: null }
+    flags:
+      - { snippet: 2, reason: "unknown topic: podcasts" }
+      - { snippet: 2, reason: "ambiguous: music, or podcasts?" }
+      - { snippet: 3, reason: "new theme: film_scores" }
+    failed: null

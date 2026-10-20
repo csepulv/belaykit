@@ -1,0 +1,38 @@
+# The topics a snippet may be placed in, the themes that run across them, and the
+# types a snippet may have. The agent's classifier sees all three; anything it
+# returns outside them is flagged for review.
+topics:
+  - slug: photography
+    name: Photography
+    description: Cameras, film and lenses, photographers, darkroom work, prints and exhibitions.
+    keywords: [camera, lens, exposure, darkroom, print, aperture]
+  - slug: books
+    name: Books
+    description: Novels and nonfiction, authors, reading lists and book clubs.
+    keywords: [novel, author, chapter, reading list, paperback]
+    aliases: [reading]
+  - slug: music
+    name: Music
+    description: Albums, artists, concerts, instruments and listening habits.
+    keywords: [album, band, concert, record, vinyl, guitar, setlist]
+  - slug: movies
+    name: Movies
+    description: Films, directors, cinema trips, screenings and soundtracks.
+    keywords: [director, cinema, screening, trailer, sequel]
+    aliases: [cinema, films]
+
+themes: [analog_revival, adaptations, criticism, gear, collecting]
+
+types:
+  - name: idea
+    description: A proposal or thought still in progress.
+  - name: question
+    description: An open question.
+  - name: task
+    description: Something to do.
+  - name: note
+    description: A standalone observation.
+  - name: review
+    description: A judgement of a specific work.
+  - name: quote
+    description: Words quoted from someone else.

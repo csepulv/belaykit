@@ -1,0 +1,24 @@
+{
+  "name": "@belaykit/core",
+  "version": "0.1.0",
+  "description": "BelayKit's agent loop and provider composition: a bounded loop for focused agents, with no dependencies.",
+  "license": "MIT",
+  "author": "Christian Sepulveda <dev@justideas.io>",
+  "type": "module",
+  "exports": {
+    ".": { "types": "./index.d.ts", "default": "./index.js" }
+  },
+  "files": ["*.js", "*.d.ts"],
+  "engines": { "node": ">=20.19" },
+  "repository": { "type": "git", "url": "git+https://github.com/csepulv/belaykit.git", "directory": "packages/core" },
+  "homepage": "https://github.com/csepulv/belaykit#readme",
+  "bugs": { "url": "https://github.com/csepulv/belaykit/issues" },
+  "keywords": ["agent", "agents", "decision loop", "llm", "harness"],
+  "publishConfig": { "access": "public" },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.0"
+  }
+}

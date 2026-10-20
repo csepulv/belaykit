@@ -1,0 +1,7 @@
+version: 1
+sections:
+  - name: triage
+    when: app_state(ws, "itme") == "present"
+    rules:
+      - when: "true"
+        then: { action: flgg }

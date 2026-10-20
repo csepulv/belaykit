@@ -1,0 +1,26 @@
+{
+  "segmentations": [
+    {
+      "snippets": [
+        { "ranges": [{ "start": 5, "end": 5 }] },
+        { "ranges": [{ "start": 6, "end": 6 }] },
+        { "ranges": [{ "start": 10, "end": 10 }] },
+        { "ranges": [{ "start": 11, "end": 11 }] },
+        { "ranges": [{ "start": 15, "end": 15 }] },
+        { "ranges": [{ "start": 16, "end": 16 }] },
+        { "ranges": [{ "start": 20, "end": 20 }] }
+      ],
+      "structural": [1, 3, 8, 13, 18],
+      "skipped": []
+    }
+  ],
+  "classifications": [
+    { "topics": ["music"], "type": "review", "themes": ["analog_revival"], "ambiguity": "" },
+    { "topics": ["music"], "type": "task", "themes": ["collecting"], "ambiguity": "" },
+    { "topics": ["music"], "type": "idea", "themes": [], "ambiguity": "" },
+    { "topics": ["music", "movies"], "type": "idea", "themes": ["film_scores"], "ambiguity": "" },
+    { "topics": ["movies"], "type": "question", "themes": ["collecting"], "ambiguity": "" },
+    { "topics": ["podcasts"], "type": "question", "themes": ["criticism"], "ambiguity": "A podcast reviewing a tour: music, or a topic the map doesn't have." },
+    { "topics": ["music"], "type": "quote", "themes": [], "ambiguity": "" }
+  ]
+}
