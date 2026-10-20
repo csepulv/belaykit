@@ -8,6 +8,13 @@ what happened, even when something fails.
 Decisions can be written in code, or as a **rulebook**: a YAML file of rules with CEL conditions, checked against
 your code before it runs.
 
+```mermaid
+flowchart LR
+    Subject(["a subject"]) --> Init["initializer"] --> Done{"finished?"}
+    Done -->|"no"| Choose["choice provider:<br/>the choices for now"] --> Act["the matching choices'<br/>actions run"] --> Done
+    Done -->|"yes"| Outcome(["outcome:<br/>result and trace"])
+```
+
 ```bash
 npm install @belaykit/core
 npm install @belaykit/rulebook   # for rulebooks

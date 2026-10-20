@@ -28,6 +28,27 @@ The run ends `no_match` if a choice set selects nothing, and `failed` if somethi
 **finalizer** turns the final working set into the run's **result**, and you get an **outcome** with the result, the
 working set and a **trace** of every iteration.
 
+```mermaid
+flowchart TD
+    Run(["agent.run(subject)"]) --> Init["initializer(subject)<br/>builds the working set"]
+    Init --> Done
+    subgraph Iteration["each iteration, up to maxIterations"]
+        Done{"finishChecker(ws):<br/>done?"}
+        Provider["choiceProvider(ws)<br/>returns a choice set"]
+        Select{"criteria evaluated,<br/>the mode selects"}
+        Act["the selected actions run<br/>and update the working set"]
+        Done -->|"no"| Provider --> Select
+        Select -->|"some selected"| Act
+    end
+    Act -->|"next iteration"| Done
+    Done -->|"yes"| Completed(["completed"])
+    Select -->|"none selected"| NoMatch(["no_match"])
+    Completed --> Final["finalizer(ws) → result"]
+    NoMatch --> Final
+    Final --> Outcome(["outcome: status, result,<br/>workingSet, trace"])
+    Iteration -. "something throws, the provider<br/>returns null, or the limit is reached" .-> Failed(["failed: error,<br/>workingSet, trace"])
+```
+
 ```js run
 import { Agent, always } from '@belaykit/core';
 
@@ -128,6 +149,15 @@ A provider may also return `null`: "nothing to offer". On its own, an agent's pr
 run `failed`. Inside `chain([...providers])`, `null` hands the iteration to the next provider; the first that returns
 a set claims it, and the chain itself returns `null` when none does. That's how a rulebook, which only knows some
 situations, hands the rest to code:
+
+```mermaid
+flowchart LR
+    WS(["working set"]) --> First["first provider"]
+    First -->|"a choice set"| Claimed(["the iteration's<br/>choice set"])
+    First -->|"null"| Next["next provider"]
+    Next -->|"a choice set"| Claimed
+    Next -->|"null, and none left"| None(["the chain returns null"])
+```
 
 ```js run
 import { Agent, always, chain } from '@belaykit/core';

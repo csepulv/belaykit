@@ -69,6 +69,16 @@ On each iteration the rulebook's provider looks at the working set (`ws` in CEL)
    nothing to offer. As an agent's only provider, that ends the run `failed`; in a `chain`, the next provider takes
    the iteration.
 
+```mermaid
+flowchart TD
+    WS(["the working set, ws"]) --> Section{"the first section<br/>whose when holds"}
+    Section -->|"none holds"| Null(["null: nothing to offer"])
+    Section -->|"found"| Needs{"needs keys<br/>not yet gathered?"}
+    Needs -->|"yes"| Gather(["a choice set that runs<br/>their producers"])
+    Needs -->|"no, and it has rules"| Rules(["its rules as a choice set,<br/>under its hit policy"])
+    Needs -->|"no, and it only gathers"| Null
+```
+
 So a gather-only section's `when` should turn false once its work is done, or it keeps claiming the working set.
 
 ## The working set: `needs` and `gathered`
