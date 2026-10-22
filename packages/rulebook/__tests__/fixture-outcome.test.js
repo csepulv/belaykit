@@ -11,6 +11,7 @@ version: 1
 sections:
   - name: nodes
     when: ws.status == null
+    exhaustive: false
     rules:
       - id: confirm_open
         selectFirst: { node: ws.nodes }
@@ -65,7 +66,7 @@ describe('a fixture that states the result', () => {
     const initial = { nodes: nodes('yes'), status: null };
     const outcome = await run({ initial, expect: { status: 'completed' } }, { finalizer: null });
 
-    expect(outcome.result).toEqual({ nodes: [{ id: 'n0', status: 'settled', fact: 'yes' }], status: 'closed', gathered: [] });
+    expect(outcome.result).toEqual({ nodes: [{ id: 'n0', status: 'settled', fact: 'yes' }], status: 'closed' });
   });
 });
 
@@ -103,6 +104,7 @@ version: 1
 sections:
   - name: count
     when: ws.status == null
+    exhaustive: false
     rules:
       - id: pick_two
         selectFirst: { n: "[1, 2, 3]" }

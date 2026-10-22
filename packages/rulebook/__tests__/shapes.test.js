@@ -44,6 +44,7 @@ version: 1
 sections:
   - name: review
     when: ${JSON.stringify(when.section ?? 'ws.snippets.exists(s, !s.reviewed)')}
+    exhaustive: false
     rules:
       - id: flag
         selectFirst: ${selectFirst}
@@ -160,5 +161,89 @@ describe('the registry\'s shapes themselves', () => {
   test('a registry key the plugin doesn\'t read is refused, so a leftover fields isn\'t ignored', () => {
     const problems = Rulebook.check(reviewRule({ when: {} }), { ...registry(), fields: { snippets: ['text'] } });
     expect(problems).toEqual(['registry: unknown key "fields" (keys: producers, actions, functions, version, initialKeys, shapes)']);
+  });
+});
+
+// A string literal compared with a field whose shape lists its values (`enum`, `const`) must be
+// one of them, so a typo in a compared value fails at load instead of never matching.
+describe('a string literal compared with a field that allows only certain values', () => {
+  const META = {
+    type: 'object',
+    properties: { status: { type: 'string', enum: ['open', 'closed'] }, kind: { const: 'memo' }, note: { type: 'string' } },
+    additionalProperties: false,
+  };
+  const withMeta = registry({ snippets: SNIPPETS, meta: META });
+  const ruleProblems = (rule) => problemsOf({ rule: `!snippet.reviewed && ${rule}` }, { registry: withMeta });
+  const place = 'section "review" rule 1 (flag) when';
+
+  test.each([
+    ['==', 'ws.meta.status == "opne"', 'opne'],
+    ['!=', 'ws.meta.status != "opne"', 'opne'],
+    ['== with the literal first', '"opne" == ws.meta.status', 'opne'],
+    ['in a list', 'ws.meta.status in ["open", "clsoed"]', 'clsoed'],
+  ])('through %s, a value the enum lacks is a load error', (_label, rule, value) => {
+    expect(ruleProblems(rule)).toEqual([`${place}: ws.meta.status is compared with "${value}", which its shape doesn't allow (open, closed)`]);
+  });
+
+  test('a const allows its one value', () => {
+    expect(ruleProblems('ws.meta.kind == "note"')).toEqual([`${place}: ws.meta.kind is compared with "note", which its shape doesn't allow (memo)`]);
+    expect(ruleProblems('ws.meta.kind == "memo"')).toEqual([]);
+  });
+
+  test('through a selectFirst binding, a nullable enum (as zod writes it) is checked', () => {
+    expect(ruleProblems('snippet.classification.type == "nte"'))
+      .toEqual([`${place}: snippet.classification.type is compared with "nte", which its shape doesn't allow (note, task)`]);
+  });
+
+  test('through a macro variable, the item\'s enum is checked', () => {
+    expect(problemsOf({ section: 'ws.snippets.exists(s, s.classification.type == "tsk")' }, { registry: withMeta }))
+      .toEqual(['section "review" when: s.classification.type is compared with "tsk", which its shape doesn\'t allow (note, task)']);
+  });
+
+  test('values the shape allows, a field that doesn\'t restrict its values, and a key without a shape load as before', () => {
+    expect(ruleProblems('ws.meta.status == "open" && "closed" != ws.meta.status && ws.meta.status in ["open", "closed"]')).toEqual([]);
+    expect(ruleProblems('ws.meta.note == "anything"')).toEqual([]);
+    expect(ruleProblems('ws.loose.status == "anything"')).toEqual([]);
+  });
+
+  test('a misspelled field is reported once, as an unknown field, not also as a compared value', () => {
+    expect(ruleProblems('ws.meta.statsu == "open"')).toEqual([`${place}: unknown field "statsu" on ws.meta`]);
+  });
+
+  test('a value repeated in an in-list is reported once', () => {
+    expect(ruleProblems('ws.meta.status in ["opne", "opne"]'))
+      .toEqual([`${place}: ws.meta.status is compared with "opne", which its shape doesn't allow (open, closed)`]);
+  });
+
+  // `allOf` is an intersection, so a branch that doesn't restrict values doesn't lift another's restriction.
+  describe('combined schemas', () => {
+    const problemsFor = (status, rule) => Rulebook.check(
+      reviewRule({ when: { rule: `!snippet.reviewed && ${rule}` } }),
+      registry({ snippets: SNIPPETS, meta: { type: 'object', properties: { status }, additionalProperties: false } }),
+    );
+    const refused = (value, allowed) => [`${place}: ws.meta.status is compared with "${value}", which its shape doesn't allow (${allowed})`];
+
+    test('allOf with an enum and an unrestricted branch (as zod writes .and()) is checked', () => {
+      const status = { allOf: [{ type: 'string', enum: ['open', 'closed'] }, { type: 'string', minLength: 1 }] };
+      expect(problemsFor(status, 'ws.meta.status == "opne"')).toEqual(refused('opne', 'open, closed'));
+      expect(problemsFor(status, 'ws.meta.status == "open"')).toEqual([]);
+    });
+
+    test('allOf of two enums allows only the values both allow', () => {
+      const status = { allOf: [{ enum: ['a', 'b'] }, { enum: ['b', 'c'] }] };
+      expect(problemsFor(status, 'ws.meta.status == "a"')).toEqual(refused('a', 'b'));
+      expect(problemsFor(status, 'ws.meta.status == "b"')).toEqual([]);
+    });
+
+    test('a schema\'s own type beside anyOf branches with enums is checked against the branches', () => {
+      const status = { type: 'string', anyOf: [{ enum: ['a'] }, { enum: ['b'] }] };
+      expect(problemsFor(status, 'ws.meta.status == "c"')).toEqual(refused('c', 'a, b'));
+      expect(problemsFor(status, 'ws.meta.status in ["a", "b"]')).toEqual([]);
+    });
+
+    test('anyOf with an unrestricted branch allows any string', () => {
+      const status = { anyOf: [{ enum: ['a'] }, { type: 'string' }] };
+      expect(problemsFor(status, 'ws.meta.status == "c"')).toEqual([]);
+    });
   });
 });

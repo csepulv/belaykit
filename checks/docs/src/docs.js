@@ -25,7 +25,7 @@ const walk = (directory) => (!existsSync(directory) ? [] : readdirSync(directory
 });
 
 const PUBLIC_ROOT = existsSync(join(REPO, 'publish')) ? 'publish' : '';
-const IN_PUBLIC_ROOT = ['README.md', 'LICENSE', '.gitignore', 'documentation'];
+const IN_PUBLIC_ROOT = ['README.md', 'CHANGELOG.md', 'LICENSE', '.gitignore', 'documentation'];
 // The top-level entries the public repo has; a link to anything else leads nowhere there.
 const PUBLIC_ENTRIES = [...IN_PUBLIC_ROOT, 'packages', 'examples', 'checks', 'package.json', 'pnpm-workspace.yaml', 'pnpm-lock.yaml'];
 
@@ -45,6 +45,7 @@ const readmesIn = (folder) => (existsSync(join(REPO, folder)) ? readdirSync(join
 // Repo-relative paths of every public doc, in a stable order.
 export const publicDocs = () => [
   repoPathOf('README.md'),
+  repoPathOf('CHANGELOG.md'),
   ...walk(join(REPO, repoPathOf('documentation'))).filter((path) => path.endsWith('.md')).map((path) => relative(REPO, path)).sort(),
   ...readmesIn('packages'),
   ...readmesIn('examples'),

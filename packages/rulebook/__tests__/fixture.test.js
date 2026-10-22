@@ -9,7 +9,7 @@ const RULEBOOK = `
 version: 1
 sections:
   - name: gather
-    when: ws.routing == null && !("classification" in ws.gathered)
+    when: ws.routing == null && !has(ws.classification)
     needs:
       classification: classify_item
   - name: decide

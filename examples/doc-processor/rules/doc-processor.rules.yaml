@@ -26,7 +26,7 @@ sections:
       - id: flag_ambiguity
         selectFirst: { snippet: ws.snippets }
         when: doc_waiting(snippet, ws.snippets) && snippet.classification.ambiguity != ""
-        then: { action: flag_ambiguity }
+        then: { action: flag_ambiguity, reason: "ambiguous: {snippet.classification.ambiguity}" }
         why: the classifier couldn't choose a topic
       - id: flag_new_themes
         selectFirst: { snippet: ws.snippets }
@@ -40,6 +40,8 @@ sections:
 
   - name: classify
     when: ws.accepted == true && ws.snippets.exists(s, s.classification == null && s.error == null)
+    # The section's when holds only while a snippet waits, so its one rule always selects one.
+    exhaustive: false
     rules:
       - id: classify
         selectFirst: { snippet: ws.snippets }

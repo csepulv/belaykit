@@ -80,6 +80,7 @@ version: 1
 sections:
   - name: type
     when: ws.items.exists(i, i.type == null)
+    exhaustive: false                       # its when holds only while an item waits, so a rule always matches
     rules:
       - id: question
         selectFirst: { item: ws.items }
@@ -130,6 +131,10 @@ question: which lens for portraits?
 its `when` holds; the action gets that line's index as `selected.index`. Each rule selects on its own, so the
 question rule may type line 3 before the note rule types line 2. The result is the same, but if several rules must
 act on *the same* item, say which one in each `when` ([Rulebooks](rulebooks.md#selectfirst) shows how).
+
+A `FIRST` section with rules must say what happens when none of them holds: it ends in a rule that always holds, or,
+like this one, says `exhaustive: false`, that it needs no catch-all. Here the section's `when` holds only while some
+line is untyped, and the last rule types any such line ([When no rule holds](rulebooks.md#when-no-rule-holds)).
 
 Loading checks the rulebook against the registry before anything runs: an action the registry doesn't have, a param
 the action doesn't take, CEL that doesn't compile, a `ws.` key nothing declares. Give the registry a `shapes` entry for
@@ -240,7 +245,7 @@ both), so you can compare how each way writes the decisions.
 ```bash
 cd examples/doc-processor
 pnpm run check                                       # belaykit-rulebook check: "rules/doc-processor.rules.yaml: ok"
-pnpm -s run reference > rules/functions.md           # the registry's CEL functions, as Markdown
+pnpm -s run reference > rules/functions.md           # BelayKit's helpers and the registry's functions, as Markdown
 ```
 
 A **fixture** pins what the rulebook decides, without a model: where a run starts, what each producer returns, and how

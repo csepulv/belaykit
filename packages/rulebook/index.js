@@ -4,3 +4,4 @@
 export { Rulebook } from './rulebook.js';
 export { describeFunctions } from './reference.js';
 export { loadFixture } from './fixture.js';
+export { schemaVersions, version } from './version.js';

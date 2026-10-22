@@ -8,7 +8,7 @@ A **rulebook** writes an agent's decisions as text: a YAML file of **sections** 
 [CEL](https://cel.dev) (the Common Expression Language: small, side-effect-free expressions). It's checked when it
 loads against your agent's **registry**, the code it may name, and a loaded `Rulebook` gives you a choice provider for
 `@belaykit/core`. This page is the reference for the format and the package; [Getting started](getting-started.md)
-shows one in use.
+shows one in use. Coming from 0.1? [Upgrading](upgrading.md) lists what changed in 0.2 and what to do.
 
 ```bash
 npm install @belaykit/core @belaykit/rulebook
@@ -21,7 +21,7 @@ npm install @belaykit/core @belaykit/rulebook
 version: 1
 sections:
   - name: gather
-    when: '!("classification" in ws.gathered)'
+    when: '!has(ws.classification)'                 # until it is gathered
     needs: { classification: classify_item }        # a producer fills ws.classification
   - name: decide
     when: ws.routing == null
@@ -40,16 +40,18 @@ sections:
 | --- | --- | --- |
 | `version` | top | Always `1`. |
 | `hitPolicyDefault` | top | `FIRST` or `ALL`, for sections that don't set `hitPolicy`. Default `FIRST`. |
+| `outputs` | top | Optional. The working-set keys `rules.decide` returns. See [below](#deciding-with-a-rulebook). |
 | `sections` | top | The sections, in order. |
 | `name` | section | Names the iteration in the trace. |
 | `when` | section | CEL: when this section applies. |
 | `needs` | section | `{ key: producer }`: working-set keys this section gathers before its rules run. |
 | `hitPolicy` | section | `FIRST` (the first rule that holds) or `ALL` (every rule that holds). |
+| `exhaustive` | section | Optional, `false` only: this `FIRST` section needs no catch-all rule. See [below](#when-no-rule-holds). |
 | `rules` | section | The rules. A section may have none and only gather. |
 | `id` | rule | Optional. Names the rule in the trace and errors; default `<section>#<n>`, counting from 1. |
 | `selectFirst` | rule | Optional. `{ name: <CEL list> }`: act on one item of a list. See [below](#selectfirst). |
 | `when` | rule | CEL: when this rule holds. |
-| `then` | rule | `{ action: <registered action>, ...params }`: the action to run, and literal params for it. |
+| `then` | rule | `{ action: <registered action>, ...params }`: the action to run, and literal params for it ([templated](#templated-params) where the action allows). |
 | `why` | rule | Optional. Carried into the trace beside the rule's name. |
 
 Section names, rule ids and `selectFirst` binding names match `^[a-z][a-z0-9_]*$`: a lowercase letter, then lowercase
@@ -61,10 +63,11 @@ On each iteration the rulebook's provider looks at the working set (`ws` in CEL)
 
 1. It takes the **first section whose `when` holds**. Later sections aren't tried in that iteration, even if the
    first one has nothing to do.
-2. If that section has `needs` keys not yet **gathered**, it returns a choice set that runs their producers
-   (`gather <key>` in the trace).
+2. If that section has `needs` keys not yet **gathered** (not present in the working set), it returns a choice set
+   that runs their producers (`gather <key>` in the trace).
 3. Otherwise it returns the section's rules as a choice set, under its hit policy: each rule is a choice named by its
-   `id`, whose criteria evaluate its `when`, and whose action is the registered action in `then`.
+   `id`, whose criteria check its action's [guard](#guarded-actions), if it has one, then evaluate its `when`, and
+   whose action is the registered action in `then`.
 4. If no section's `when` holds, or the claiming section only gathers and its needs are met, it returns `null`:
    nothing to offer. As an agent's only provider, that ends the run `failed`; in a `chain`, the next provider takes
    the iteration.
@@ -73,26 +76,65 @@ On each iteration the rulebook's provider looks at the working set (`ws` in CEL)
 flowchart TD
     WS(["the working set, ws"]) --> Section{"the first section<br/>whose when holds"}
     Section -->|"none holds"| Null(["null: nothing to offer"])
-    Section -->|"found"| Needs{"needs keys<br/>not yet gathered?"}
+    Section -->|"found"| Needs{"needs keys<br/>not yet present?"}
     Needs -->|"yes"| Gather(["a choice set that runs<br/>their producers"])
     Needs -->|"no, and it has rules"| Rules(["its rules as a choice set,<br/>under its hit policy"])
     Needs -->|"no, and it only gathers"| Null
 ```
 
-So a gather-only section's `when` should turn false once its work is done, or it keeps claiming the working set.
+So a gather-only section's `when` should turn false once its work is done, or it keeps claiming the working set:
+write it `!has(ws.<key>)`.
 
-## The working set: `needs` and `gathered`
+### When no rule holds
 
-`rules.initialize(initial)` builds the working set: your initial keys, every key any section `needs` set to `null`,
-and `gathered: []`. When a section gathers a key, its producer's return value becomes that key's value and the key is
-added to `ws.gathered`. A producer may return `null` ("looked, found nothing"); the key still counts as gathered.
+A section that claims the working set and has rules returns them as a choice set, so if none of them holds, the run
+ends `no_match`, even in a `chain`: the next provider isn't asked, since this one had something to offer. So a `FIRST`
+section says what happens then. Either its last rule always holds, doing what you mean by "none of the above": its
+`when` is `"true"`, it has no `selectFirst` (which can fail on an empty list), and its action has no
+[guard](#guarded-actions) (which can fail too). Or the section says `exhaustive: false`: it needs no catch-all,
+because its `when` already ensures that some rule holds, or because a no-match should end the run. Otherwise it is a
+load error. `ALL` and gather-only sections are exempt.
+
+```js run
+import { Rulebook } from '@belaykit/rulebook';
+
+const registry = { producers: {}, actions: { settle: { writes: ['routing'], run: async () => {} } }, initialKeys: ['item', 'routing'] };
+console.log(Rulebook.check(`
+version: 1
+sections:
+  - name: decide
+    when: ws.routing == null
+    rules:
+      - when: ws.item == "urgent"
+        then: { action: settle }
+`, registry).join('\n'));
+```
+
+```text output
+section "decide": a FIRST section must end in a rule with when: "true" (without selectFirst), or say exhaustive: false
+```
+
+## The working set and `needs` keys
+
+`rules.initialize(initial)` builds the working set: a copy of your initial keys, nothing added. A `needs` key is
+**gathered when it is present** (there, and not holding `undefined`, as CEL's `has()` reads it): until then it is
+absent, and when its section gathers it, the producer's return value becomes its value. Whatever puts the key there
+gathers it: an action that writes a `needs` key before its section runs has supplied it, and the producer doesn't run. A producer may return `null` ("looked, found nothing"); the key is present, so it counts as
+gathered. A producer that returns `undefined` (a missing `return`, say) fails the run, since the key would read as
+absent and be gathered again forever.
+
+So a rule asks whether a key has been gathered with `has(ws.<key>)`, and whether it was found with
+`has(ws.<key>) && ws.<key> != null` (or `belaykit.present(ws, "<key>")`). `ws.<key> == null` on a key not yet gathered
+fails the run (`No such key`), rather than reading as "not yet". An initial working set that already holds a `needs`
+key, `null` included, is refused (`initialize` throws), since that key would count as gathered and its producer
+would never run. That check is `initialize`'s: a working set your initializer builds without it is taken as it is.
 
 Everything else in the working set is yours to initialize and declare: initial keys in the registry's `initialKeys`,
-keys an action writes in its `writes`. BelayKit assumes no particular field: your finish checker decides when the run
-is done.
+keys an action writes in its `writes`. BelayKit adds no field of its own (there is no `ws.gathered` since 0.2) and
+assumes no particular field: your finish checker decides when the run is done.
 
-A key is gathered once. To have it produced again (a code check that rejects a model's answer, say), an action calls
-`rules.regather(ws, key)`: the key goes back to `null` and out of `gathered`, so its section gathers it again. A key
+A gathered key stays gathered while it is present. To have it produced again (a code check that rejects a model's
+answer, say), an action calls `rules.regather(ws, key)`: the key is removed, so its section gathers it again. A key
 the rulebook doesn't declare throws a `TypeError`, which ends the run `failed`, naming the key.
 
 ## Conditions in CEL
@@ -101,7 +143,10 @@ Every `when` is a CEL expression over `ws`, and it must be a boolean. One whose 
 (a string, a number, a list) is refused then; one whose type is only known at run time (a bare `ws.flag`) fails the run
 if it evaluates to anything but `true` or `false`. It's never read as "no match".
 
-`x.y` on a map without key `y` is an error, not `null`: guard with `has(x.y)` when a field may be missing.
+`x.y` on a map without key `y` is an error, not `null`: guard with `has(x.y)` when a field may be missing. But
+`has(x.y)` is true when `y` holds `null`, so a rule that goes on to read `x.y.z` still fails there. Guard a value
+that may be missing *or* `null` with `has(x.y) && x.y != null`, or, for a path of any depth, with BelayKit's helper
+`belaykit.present(x, "y.z")` ([below](#belaykits-helpers)).
 
 **Keys and fields are checked when the rulebook loads.** `ws.x` (or `ws["x"]`) must be a known key: one in
 `initialKeys`, a section's `needs`, or a producer's or action's `writes`. The fields below a key are checked against
@@ -122,9 +167,63 @@ as `{ signature: 'app_isBlank(string): bool', handler }`. A signature's types ar
 `uint`, `double`, `bytes`, `null_type`, `dyn`, and `list<T>` or `map<K, V>` (`list` and `map` alone mean any element
 type). An `int` argument reaches the handler as a JavaScript `BigInt` (`2n`), so a handler that does arithmetic with
 numbers must convert it (`Number(n)`) or use BigInts throughout. Names match `^[a-z][a-zA-Z0-9_]*$`; by convention,
-prefix your own (`app_isBlank`) to keep them apart from CEL's and from functions BelayKit may add. A dotted name is
-refused. A function that takes a container and a key name can declare which argument is which,
-`keyArgs: { key: 1, in: 0 }`, and then a literal key passed to it is checked like a field reference.
+prefix your own (`app_isBlank`) to keep them apart from CEL's. A dotted name is refused, and so is the name
+`belaykit`, which belongs to BelayKit's helpers. A function that takes a container and a key name can declare which
+argument is which, `keyArgs: { key: 1, in: 0 }`, and then a literal key passed to it is checked like a field
+reference.
+
+### BelayKit's helpers
+
+BelayKit adds a few functions of its own, for the oddities of CEL, under the name `belaykit`, in every rulebook.
+`belaykit.present(container, path)` says whether a value is there: it is true when every key on the dotted `path`
+exists and the last value isn't `null`, and false for a missing key or a `null` anywhere on the way. It reads the
+path itself, so a missing key never fails the run. The container is any map: `ws`, a `selectFirst` binding, a macro's
+variable, and the plain objects and JavaScript `Map`s your agent writes. Each segment is a plain key; list indexes
+aren't supported.
+
+The path must be a string literal, and it is checked when the rulebook loads, like the fields it reads:
+`belaykit.present(ws, "facts.recurence")` is refused as `ws.facts.recurence` would be. Its first key must be a known
+one, the rest are checked as far as the registry's [shapes](#shapes) say what the fields are, and an empty path or
+segment is refused. Stepping into a value that isn't a map (a list, a string, a number) is refused at load where a
+shape says what the value is, and is an error when the rule runs otherwise, since the path then can't mean anything.
+
+```js run
+import { Rulebook } from '@belaykit/rulebook';
+
+const registry = {
+  producers: {},
+  actions: { follow_up: { writes: ['followed'], run: async (ws) => { ws.followed = true; } } },
+  initialKeys: ['facts', 'followed'],
+};
+const rules = Rulebook.fromText(`
+version: 1
+sections:
+  - name: follow
+    when: ws.followed == null
+    exhaustive: false
+    rules:
+      - when: belaykit.present(ws, "facts.recurrence") && ws.facts.recurrence.answer == "yes"
+        then: { action: follow_up }
+`, registry);
+
+for (const facts of [{}, { recurrence: null }, { recurrence: { answer: 'yes' } }]) {
+  const fixture = { initial: { facts, followed: null }, expect: { status: 'completed' } };
+  const run = await rules.runFixture({ fixture, finishChecker: (ws) => ws.followed === true });
+  console.log(JSON.stringify(facts), run.status);
+}
+```
+
+```text output
+{} no_match
+{"recurrence":null} no_match
+{"recurrence":{"answer":"yes"}} completed
+```
+
+With `has(ws.facts.recurrence)` in place of `belaykit.present`, the second case would fail the run reading `answer`.
+The name `belaykit` is reserved: a `selectFirst` binding or a macro variable (`cel.bind`'s included) can't take it,
+and a registry can't register a function under it, nor a method on `dyn` that would overlap a helper (its name and
+arguments), which would also apply to it. The function reference lists the helpers first
+([Loading and checking](#loading-and-checking)).
 
 **Patterns.** `s.matches(pattern)` runs JavaScript's backtracking regular expressions, often on model output. So a
 pattern must be a string literal, must compile, and must pass
@@ -168,6 +267,7 @@ version: 1
 sections:
   - name: review
     when: ws.snippets.exists(s, !s.reviewd)
+    exhaustive: false
     rules:
       - id: flag
         selectFirst: { snippet: ws.snippets }
@@ -188,6 +288,43 @@ shape, and at a `$ref` that isn't local (`#/$defs/…` is followed). A tuple's `
 Reading a field of a list itself, rather than of its items, is a load error. A shape for a key nothing declares is a
 registry problem. Shapes are only for these checks: BelayKit doesn't validate working-set values against them.
 
+Where a field's shape lists the values it allows (`enum`, as `z.enum` writes, or `const`, as `z.literal` writes), a
+string compared with it must be one of them: through `==` or `!=`, with the string on either side, and in an
+`in [...]` list. A typo in a compared value would otherwise make its rule never match, without a word:
+
+```js run
+import { Rulebook } from '@belaykit/rulebook';
+
+const registry = {
+  producers: {},
+  actions: { route: { writes: ['routed'], run: async () => {} } },
+  initialKeys: ['ticket', 'routed'],
+  shapes: { ticket: { type: 'object', properties: { status: { type: 'string', enum: ['open', 'closed'] } }, additionalProperties: false } },
+};
+
+console.log(Rulebook.check(`
+version: 1
+sections:
+  - name: route
+    when: ws.routed == null
+    exhaustive: false
+    rules:
+      - when: ws.ticket.status == "opne" || ws.ticket.status in ["open", "clsoed"]
+        then: { action: route }
+`, registry).join('\n'));
+```
+
+```text output
+section "route" rule 1 when: ws.ticket.status is compared with "opne", which its shape doesn't allow (open, closed)
+section "route" rule 1 when: ws.ticket.status is compared with "clsoed", which its shape doesn't allow (open, closed)
+```
+
+Only a field compared directly with a string literal is checked: not one behind an operator or a ternary, not
+`"x" in ws.list`, and not a field read through a `selectFirst` binding over anything but `ws.<key>` (where the field
+check stops too). A field whose shape allows any string, or a key without a shape, isn't checked either. Where a
+shape combines schemas, `anyOf` and `oneOf` allow any of their branches' values and `allOf` only the values every
+branch allows; a branch that doesn't list values (zod's `.and(z.string().min(1))`, say) restricts nothing.
+
 ## `selectFirst`
 
 A rule can act on one item of a list:
@@ -203,8 +340,8 @@ The rule's `when` is tried for each item in list order with the item bound to `n
 holds is selected, and if none does, the rule doesn't match. The action receives `selected: { name, item, index }`,
 and the trace entry records `detail: { node: <index> }`. The binding exists only in that rule's `when`, and its fields
 are checked against the list's shape when it has one. A binding named
-`ws`, a CEL reserved word, a name CEL already defines (`string`, `int`, `list`…) or a registered function's name is
-refused when the rulebook loads.
+`ws`, `belaykit`, a CEL reserved word, a name CEL already defines (`string`, `int`, `list`…) or a registered
+function's name is refused when the rulebook loads.
 
 **Each rule selects on its own.** In an `ALL` section, several rules with `selectFirst` over the same list each pick
 their own first match, so in one iteration they may act on different items. When several rules must act on *the same*
@@ -215,7 +352,7 @@ holds only for the one snippet waiting for review, and every review rule calls i
       - id: flag_ambiguity
         selectFirst: { snippet: ws.snippets }
         when: doc_waiting(snippet, ws.snippets) && snippet.classification.ambiguity != ""
-        then: { action: flag_ambiguity }
+        then: { action: flag_ambiguity, reason: "ambiguous: {snippet.classification.ambiguity}" }
         why: the classifier couldn't choose a topic
 ```
 
@@ -242,16 +379,170 @@ const registry = {
 
 - A **producer** `run(ws, deps)` returns the value of its `needs` key. `writes` names the keys it sets.
 - An **action** `run(ws, { params, deps, selected })` writes the working set: `params` are the rule's literal `then:`
-  fields besides `action` (read-only: they're frozen when the rulebook loads), `deps` are what you passed to
-  `rules.provider(deps)`, and `selected` is there for a `selectFirst` rule.
+  fields besides `action`, with any [templated](#templated-params) ones filled in (read-only: they're frozen),
+  `deps` are what you passed to `rules.provider(deps)`, and `selected` is there for a `selectFirst` rule. `params` keep the key order the rule
+  wrote them in, at every level, except that integer-like keys (`"1"`, `"20"`) come first in ascending order, as in
+  any JavaScript object. Either way the order is the same on every run, so their JSON text is stable enough to derive
+  an id from.
 - An action's **`params`** is a JSON Schema for the params it takes, and each rule's params are checked against it
   when the rulebook loads: a missing required param, a value the schema refuses, or a param the schema doesn't name
   is a load error naming the rule. A params schema is closed by default: unless it says what to do with extra keys
   itself (`additionalProperties` or `unevaluatedProperties`), a misspelled param is refused. An action without
   `params` takes none, so a rule that passes any is a load error too.
-- These are the registry's only keys; any other (an old `fields`, say) is a load problem rather than ignored.
+- An action's **`templates`** names the params a rule may fill from the case ([below](#templated-params)).
+- An action's **`guard`** is a CEL expression that must hold for any rule to run it ([below](#guarded-actions)).
+- These are the registry's only keys; any other (an old `fields`, say) is a load problem rather than ignored. The
+  same holds for a producer's keys (`writes`, `run`) and an action's (`writes`, `params`, `templates`, `guard`, `run`), for an
+  entry made from a class too: what it needs (a client, a store) comes through `deps`, not a field of its own.
 - A rulebook keeps a copy of the registry's producers and actions when it loads, so changing your registry object
   later doesn't change what it runs.
+
+### Templated params
+
+A param can carry wording from the rulebook with values from the case, when its action lists it in `templates`. Its
+text holds placeholders, CEL inside braces, filled just before the action runs:
+
+```js run
+import { Rulebook } from '@belaykit/rulebook';
+
+const registry = {
+  producers: {},
+  actions: {
+    follow_up: {
+      writes: ['sent'],
+      params: { type: 'object', properties: { message: { type: 'string' } }, required: ['message'] },
+      templates: ['message'],
+      run: async (ws, { params }) => { ws.sent = params.message; },
+    },
+  },
+  initialKeys: ['customer', 'facts', 'sent'],
+};
+const rules = Rulebook.fromText(`
+version: 1
+sections:
+  - name: follow
+    when: ws.sent == null
+    rules:
+      - when: "true"
+        then:
+          action: follow_up
+          message: "{ws.customer.name} reported this {ws.facts.count} times ({{ref}}), because {belaykit.present(ws, 'facts.reason') ? ws.facts.reason : 'unknown'}"
+`, registry);
+
+for (const customer of [{ name: 'Ada' }, { name: null }]) {
+  const fixture = { initial: { customer, facts: { count: 3 }, sent: null }, expect: { status: 'completed' } };
+  const run = await rules.runFixture({ fixture, finishChecker: (ws) => ws.sent !== null });
+  console.log(run.status, run.workingSet?.sent ?? run.error);
+}
+```
+
+```text output
+completed Ada reported this 3 times ({ref}), because unknown
+failed follow/follow#1 action failed: param "message" placeholder {ws.customer.name}: evaluated to null, expected a string, number or boolean
+```
+
+- **Placeholders are checked when the rulebook loads,** like a rule's `when` and in the rule's own scope (a
+  `selectFirst` binding is there): unknown functions, keys, fields the shapes don't allow, `belaykit.present` paths,
+  and a type that can't become text (a list, a map, `null`).
+- **What becomes text:** a string as it is, a number or a boolean as JavaScript writes it (`3`, `1.5`, `true`).
+  Anything else, a missing key included, fails the run, naming the rule, the param and the placeholder; write a
+  default into the placeholder, as above, when a value may be absent.
+- **Braces:** `{{` and `}}` are literal braces; a lone `}`, an unclosed `{` or an empty `{}` is a load error. Braces
+  inside a placeholder's CEL strings and map literals belong to the placeholder (`{"}" + ws.x}`), but a placeholder
+  can't start with a map literal right after its brace, since `{{` is a literal brace: write `{ {"a": 1}["a"] }`.
+- **Only the action decides which params are templates,** so case values reach only the params its code expects
+  them in. A templated param must be a plain string in the action's `params` (`type: "string"`, no `enum`, `pattern`
+  or other limit, since the filled text can't be checked when the rulebook loads), and a brace in any param the
+  action doesn't template is a load error, so a placeholder never reaches an action as text.
+
+### Guarded actions
+
+An action can say when it may run at all, with a **`guard`**: a CEL expression on `ws`, in the registry. Each time a
+rule that names the action is tried, the guard is evaluated first; when it's false, the rule doesn't match, whatever
+its `when` says. And just before the action runs, the guard is checked again. So a rulebook can reorder or narrow
+when an action runs, but never run it while its guard is false:
+
+```js run
+import { Rulebook } from '@belaykit/rulebook';
+
+const settle = { writes: ['routing'], params: { type: 'object', properties: { routing: { type: 'string' } }, additionalProperties: false }, run: async (ws, { params }) => { ws.routing = params.routing; } };
+const registry = {
+  producers: {},
+  actions: {
+    settle,
+    escalate: { ...settle, guard: 'ws.retries < ws.limits.max_retries', run: async (ws, { params }) => { ws.retries += 1; ws.routing = params.routing; } },
+  },
+  initialKeys: ['retries', 'limits'],
+};
+const rules = Rulebook.fromText(`
+version: 1
+outputs: [routing]
+sections:
+  - name: decide
+    when: '!has(ws.routing)'
+    rules:
+      - id: retry
+        when: "true"
+        then: { action: escalate, routing: retry }
+      - id: give_up
+        when: "true"
+        then: { action: settle, routing: person }
+`, registry);
+
+for (const retries of [1, 3]) {
+  const decision = await rules.decide({ retries, limits: { max_retries: 3 } });
+  console.log(retries, decision.outputs.routing, JSON.stringify(decision.trace[0].evaluated[0]));
+}
+console.log((await rules.decide({ retries: 1, limits: {} })).error);
+const twice = Rulebook.fromText(`
+version: 1
+outputs: [routing]
+sections:
+  - name: decide
+    when: '!has(ws.routing)'
+    hitPolicy: ALL
+    rules:
+      - id: retry
+        when: "true"
+        then: { action: escalate, routing: retry }
+      - id: retry_again
+        when: "true"
+        then: { action: escalate, routing: retry }
+`, registry);
+console.log((await twice.decide({ retries: 2, limits: { max_retries: 3 } })).error);
+console.log(Rulebook.check(`
+version: 1
+sections:
+  - name: decide
+    when: '!has(ws.routing)'
+    rules:
+      - when: "true"
+        then: { action: escalate, routing: retry }
+`, registry).join('\n'));
+```
+
+```text output
+1 retry {"choice":"retry","matched":true}
+3 person {"choice":"retry","matched":false,"detail":{"guard":false}}
+decide/retry criteria failed: action "escalate" guard: No such key: max_retries
+decide/retry_again action failed: action "escalate" guard no longer holds; an earlier action in this iteration changed ws
+section "decide": its last rule's action "escalate" has a guard, so the rule may not hold; end in a rule with when: "true" whose action has no guard, or say exhaustive: false
+```
+
+- **A false guard is a no match,** recorded in the trace as `detail: { guard: false }`. The rule's `when` (and a
+  `selectFirst` rule's selection) isn't evaluated then, so a guard such as `has(ws.limits)` protects it.
+- **A guard must be a boolean,** as a `when` must: one that evaluates to anything else, or fails (a missing key, as
+  above), fails the run, naming the rule and the action's guard.
+- **In an `ALL` section, every rule is tried before any action runs,** so an earlier action can make a later rule's
+  guard false (above, the first `escalate` uses the last retry). The guard is checked again just before each action
+  runs, and one that no longer holds fails the run rather than running the action. In a `FIRST` section the action
+  runs right after its rule is tried, so this can't happen.
+- **A guard reads `ws` only:** it's written once, for every rule that names the action, so it can't see a rule's
+  `selectFirst` binding or its params.
+- **It's checked when the rulebook loads,** like a `when` (keys, fields through the shapes, functions, compared
+  values), once per action, for the actions the rulebook names. A guard that isn't a string is a registry problem.
+- **A guarded action's rule isn't a catch-all,** as the last line shows: its guard may fail, so a section ending in
+  it still needs an unguarded `when: "true"` rule, or `exhaustive: false` ([When no rule holds](#when-no-rule-holds)).
 
 ## Loading and checking
 
@@ -308,6 +599,7 @@ sections:
   - name: decide
     when: ws.routing == null
     hitPolicy: ${hitPolicy}
+    exhaustive: false
     rules:
       - ${ruleKey}: { s: ws.routing }
         when: "true"
@@ -324,8 +616,9 @@ section "decide" rule 1: unknown key "selectFrist"
 registry: unknown key "fields" (keys: producers, actions, functions, version, initialKeys, shapes)
 ```
 
-The `belaykit-rulebook` command runs the same check on files before you deploy them, and prints the registry's
-functions as Markdown for a reference you commit beside your rulebooks. Installed in a project, it runs with `npx`
+The `belaykit-rulebook` command runs the same check on files before you deploy them, and prints what a rulebook may
+call as Markdown, BelayKit's helpers first and then the registry's functions, for a reference you commit beside your
+rulebooks. Installed in a project, it runs with `npx`
 or from a `package.json` script:
 
 ```bash
@@ -359,6 +652,65 @@ pass `fileURLToPath(new URL('triage.rules.yaml', import.meta.url))` (from `node:
 `why`, and `deps` reach every producer and action. The deps are fixed when you make the agent, as `maxIterations`
 is; an agent that needs different deps per subject puts them in the working set or makes an agent per subject. `rules.sections` and `rules.declaredKeys` show what was loaded (as
 copies). Only `Rulebook.load` and `Rulebook.fromText` make a rulebook, so every one has passed its checks.
+
+## Deciding with a rulebook
+
+A rulebook can also be a decision function on its own. It declares its **outputs**, the keys it decides, and
+`rules.decide(initial, { deps, maxIterations })` runs it until every output is present:
+
+```js run
+import { Rulebook } from '@belaykit/rulebook';
+
+const registry = {
+  producers: { classify_item: { writes: ['classification'], run: async (ws, deps) => deps.classify(ws.item) } },
+  actions: {
+    settle: {
+      writes: ['routing', 'reason'],
+      params: { type: 'object', properties: { routing: { type: 'string' }, reason: { type: 'string' } }, additionalProperties: false },
+      run: async (ws, { params }) => { ws.routing = params.routing; ws.reason = params.reason; },
+    },
+  },
+  initialKeys: ['item'],
+};
+const rules = Rulebook.fromText(`
+version: 1
+outputs: [routing, reason]
+sections:
+  - name: gather
+    when: '!has(ws.classification) && ws.item != ""'
+    needs: { classification: classify_item }
+  - name: decide
+    when: '!has(ws.routing) && ws.item != ""'
+    rules:
+      - when: ws.classification.urgent == true
+        then: { action: settle, routing: escalate, reason: urgent }
+      - when: "true"
+        then: { action: settle, routing: hold, reason: ordinary }
+`, registry);
+const deps = { classify: async (item) => ({ urgent: item.includes('outage') }) };
+
+for (const item of ['database outage', 'new laptop', '']) {
+  const decision = await rules.decide({ item }, { deps });
+  console.log(decision.status, decision.outputs ?? decision.error);
+}
+```
+
+```text output
+completed { routing: 'escalate', reason: 'urgent' }
+completed { routing: 'hold', reason: 'ordinary' }
+no_match decide: no section decided; unset outputs: routing, reason; sections: gather (when false), decide (when false)
+```
+
+`decide` always resolves, as a run does: `completed` with `outputs`, the outputs' values; `no_match` when nothing
+applied (no section claimed the working set, or one claimed and no rule held), its `error` naming the unset outputs
+and the sections as they were asked: those before the one that claimed (`when false`), that one (`no rule held`, or
+`nothing left to gather` for a gather-only section), and the rest (`not reached`); `failed` when something broke, with
+the run's own message. Each comes with the `trace`; when no section claims, its last entry is a set named `no
+section`. When the rulebook loads, every output must be written by some action's `writes`, and none may be set by
+gathering (a `needs` key, or in a producer's `writes`). An initial working set that already holds an output, or a
+`needs` key, fails the run, naming it. `decide` rejects with a `TypeError` for a rulebook without `outputs`, an option
+it doesn't take, or an option's bad value (`maxIterations: 0`). A fixture runs the rulebook as a provider instead, so
+where `decide` says `no_match` for "no section claimed", `runFixture` says `failed`, as an agent's run would.
 
 ## Fixtures
 
@@ -395,7 +747,7 @@ const rules = Rulebook.fromText(`
 version: 1
 sections:
   - name: gather
-    when: '!("classification" in ws.gathered)'
+    when: '!has(ws.classification)'
     needs: { classification: classify_item }
   - name: decide
     when: ws.routing == null
@@ -420,9 +772,12 @@ completed []
 ## Errors at run time
 
 A run that a rulebook drives fails, naming its place, when a section's `when` or a rule's `when` isn't a boolean (or
-fails), when a `selectFirst` expression isn't a list, when a `selectFirst` rule's `when` fails for one item (counted
+fails), when an action's [guard](#guarded-actions) isn't a boolean (or fails), when a `selectFirst` expression isn't a list, when a `selectFirst` rule's `when` fails for one item (counted
 from 0, like `selected.index`), when an action throws (or calls `regather` with an undeclared key), and when a
-producer throws. In that order:
+producer throws. In that order (three more are shown where their features are: a producer that returns `undefined`,
+[in The working set](#the-working-set-and-needs-keys); a placeholder whose value can't become text, in
+[Templated params](#templated-params); and a guard that stops holding before its action runs, in
+[Guarded actions](#guarded-actions)):
 
 ```js run
 import { Agent } from '@belaykit/core';
@@ -433,6 +788,7 @@ const registry = {
   actions: {
     settle: { writes: ['routing'], run: async () => { throw new Error('store unavailable'); } },
     probe: { writes: ['routing'], run: async () => {} },
+    guarded: { writes: ['routing'], guard: 'ws.flag', run: async () => {} },
   },
   initialKeys: ['routing', 'flag', 'nodes'],
 };
@@ -447,18 +803,20 @@ async function failureOf(sections) {
   return (await agent.run()).error.message;
 }
 
-const decide = (rule, when = 'ws.routing == null') => `  - name: decide\n    when: ${JSON.stringify(when)}\n    rules:\n${rule}`;
+const decide = (rule, when = 'ws.routing == null') => `  - name: decide\n    when: ${JSON.stringify(when)}\n    exhaustive: false\n    rules:\n${rule}`;
 console.log(await failureOf(decide('      - when: "true"\n        then: { action: probe }\n', 'ws.flag')));
 console.log(await failureOf(decide('      - id: urgent\n        when: ws.flag\n        then: { action: probe }\n')));
+console.log(await failureOf(decide('      - id: urgent\n        when: "true"\n        then: { action: guarded }\n')));
 console.log(await failureOf(decide('      - id: probe_unknown\n        selectFirst: { node: ws.flag }\n        when: node == "x"\n        then: { action: probe }\n')));
 console.log(await failureOf(decide('      - id: probe_unknown\n        selectFirst: { node: ws.nodes }\n        when: node.statsu == "open"\n        then: { action: probe }\n')));
 console.log(await failureOf(decide('      - id: urgent\n        when: "true"\n        then: { action: settle }\n')));
-console.log(await failureOf(`  - name: gather\n    when: '!("classification" in ws.gathered)'\n    needs: { classification: classify_item }\n`));
+console.log(await failureOf(`  - name: gather\n    when: '!has(ws.classification)'\n    needs: { classification: classify_item }\n`));
 ```
 
 ```text output
 iteration 1 choiceProvider failed: section "decide" when failed: when evaluated to string, expected a boolean
 decide/urgent criteria failed: when evaluated to string, expected a boolean
+decide/urgent criteria failed: action "guarded" guard: evaluated to string, expected a boolean
 decide/probe_unknown criteria failed: selectFirst evaluated to string, expected a list
 decide/probe_unknown criteria failed: node = item 0: No such key: statsu
 decide/urgent action failed: store unavailable

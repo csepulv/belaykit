@@ -14,6 +14,7 @@ sections:
     when: "true"
     needs:
       classification: classify_item
+    exhaustive: false
     rules:
       - when: ws.classification != null
         then: { action: flag }
@@ -70,6 +71,33 @@ describe('Rulebook.check', () => {
     expect(Rulebook.check(CLEAN.replace('ws.classification != null', 'ws.constructor.x == 1'), withShapes)).toEqual([
       'section "classify" rule 1 when: unknown ws field "constructor"',
     ]);
+  });
+
+  // Since 0.2: a misspelled key on an action or producer would otherwise be ignored without a word.
+  test('an unknown key on a registered action or producer is a registry problem', () => {
+    const misspelled = {
+      ...registry,
+      producers: { classify_item: { write: ['classification'] } },
+      actions: { flag: { writes: ['flags'], template: ['message'] } },
+      initialKeys: ['item', 'classification'],
+    };
+
+    expect(Rulebook.check(CLEAN, misspelled)).toEqual([
+      'producer "classify_item": unknown key "write" (keys: writes, run; pass dependencies through deps)',
+      'action "flag": unknown key "template" (keys: writes, params, templates, guard, run; pass dependencies through deps)',
+    ]);
+  });
+
+  // An entry made from a class holds only the known keys too; its
+  // dependencies go in deps, which every producer and action receives.
+  test('an action made from a class that keeps a dependency in a field is refused, pointing to deps', () => {
+    class Flag {
+      constructor(client) { this.client = client; }
+      writes = ['flags'];
+      async run() {}
+    }
+    expect(Rulebook.check(CLEAN, { ...registry, actions: { flag: new Flag({}) } }))
+      .toEqual(['action "flag": unknown key "client" (keys: writes, params, templates, guard, run; pass dependencies through deps)']);
   });
 
   test('a broken registry is not a problem in the file: it throws', () => {

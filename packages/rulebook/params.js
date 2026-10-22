@@ -32,6 +32,50 @@ export function compileParamsCheckers(actions) {
   return { checkers, errors };
 }
 
+// Keywords that describe a value without limiting it; any other beside `type: 'string'` (enum, pattern,
+// minLength, format…) would be checked against the template's text, not the text it becomes.
+const ANNOTATIONS = new Set(['type', 'title', 'description', 'examples', 'default', 'deprecated', 'readOnly', 'writeOnly', '$comment']);
+
+const isPlainString = (schema) => schema !== null && typeof schema === 'object' && schema.type === 'string'
+  && Object.keys(schema).every((keyword) => ANNOTATIONS.has(keyword));
+
+// The params each action templates, by action name (the valid ones only), and the registry's
+// problems with them: a templated param must be a top-level param of the action's schema, and a
+// plain string there. `templates` is read once, here (through a class's getter too); the provider
+// fills from this, not from the entry.
+export function compileTemplatedParams(actions) {
+  const templated = new Map();
+  const errors = [];
+  const withProblems = new Set();
+  for (const [name, { templates, params }] of Object.entries(actions)) {
+    if (templates === undefined) continue;
+    const problem = (message) => {
+      errors.push(`action "${name}" templates: ${message}`);
+      withProblems.add(name);
+    };
+    if (!Array.isArray(templates)) {
+      problem('must be a list of param names');
+      continue;
+    }
+    if (params === undefined) {
+      problem('the action takes no params');
+      continue;
+    }
+    const properties = params?.properties ?? {};
+    const valid = new Set();
+    const seen = new Set();
+    for (const param of templates) {
+      if (seen.has(param)) problem(`${JSON.stringify(param)} is listed twice`);
+      else if (typeof param !== 'string' || !Object.hasOwn(properties, param)) problem(`${JSON.stringify(param)} isn't one of its params`);
+      else if (!isPlainString(properties[param])) problem(`"${param}" must be a plain string in its params schema (type "string", with no enum, pattern or other limit on its value)`);
+      else valid.add(param);
+      seen.add(param);
+    }
+    templated.set(name, valid);
+  }
+  return { templated, withProblems, errors };
+}
+
 export function paramsProblems(actionName, params, checkers) {
   if (!checkers.has(actionName)) {
     const passed = Object.keys(params);

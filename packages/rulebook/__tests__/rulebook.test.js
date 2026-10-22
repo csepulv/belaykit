@@ -11,7 +11,7 @@ const RULEBOOK = `
 version: 1
 sections:
   - name: read
-    when: '!("page" in ws.gathered)'
+    when: '!has(ws.page)'
     needs: { page: read_page }
   - name: segment
     when: ws.accepted == null
@@ -57,7 +57,7 @@ describe('what a rulebook shows', () => {
     const { sections } = Rulebook.fromText(RULEBOOK, registry());
 
     expect(sections).toEqual([
-      { name: 'read', when: '!("page" in ws.gathered)', needs: { page: 'read_page' }, hitPolicy: 'FIRST', rules: [] },
+      { name: 'read', when: '!has(ws.page)', needs: { page: 'read_page' }, hitPolicy: 'FIRST', rules: [] },
       {
         name: 'segment', when: 'ws.accepted == null', needs: { segmentation: 'segment_page' }, hitPolicy: 'FIRST',
         rules: [
@@ -84,13 +84,13 @@ describe('what a rulebook shows', () => {
 });
 
 describe('rulebook.regather', () => {
-  test('sets a gathered key back to null and out of gathered, so its section gathers it again', () => {
+  test('removes a gathered key, so its section gathers it again', () => {
     const rulebook = Rulebook.fromText(RULEBOOK, registry());
-    const ws = { ...rulebook.initialize({ attempts: ['first'], accepted: null }), page: 'text', segmentation: 'rough', gathered: ['page', 'segmentation'] };
+    const ws = { ...rulebook.initialize({ attempts: ['first'], accepted: null }), page: 'text', segmentation: 'rough' };
 
     rulebook.regather(ws, 'segmentation');
 
-    expect(ws).toMatchObject({ page: 'text', segmentation: null, gathered: ['page'] });
+    expect(ws).toEqual({ attempts: ['first'], accepted: null, page: 'text' });
   });
 
   test('a run re-gathers through it from an action, and the producer runs again', async () => {
@@ -119,7 +119,7 @@ describe('rulebook.regather', () => {
     expect(() => rulebook.regather(ws, 'segmentaton')).toThrow(
       new TypeError('regather: "segmentaton" is not a needs key of this rulebook (needs keys: page, segmentation)'),
     );
-    expect(ws.gathered).toEqual([]);
+    expect(ws).toEqual({ attempts: ['first'], accepted: null });
   });
 
   test('called from an action with an undeclared key, it ends the run failed, naming the key', async () => {

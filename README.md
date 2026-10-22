@@ -9,7 +9,7 @@ Decisions can be written in code, or as a **rulebook**: a YAML file of rules wit
 your code before it runs.
 
 ```mermaid
-flowchart LR
+flowchart TD
     Subject(["a subject"]) --> Init["initializer"] --> Done{"finished?"}
     Done -->|"no"| Choose["choice provider:<br/>the choices for now"] --> Act["the matching choices'<br/>actions run"] --> Done
     Done -->|"yes"| Outcome(["outcome:<br/>result and trace"])
@@ -52,9 +52,11 @@ completed [ 'urgent' ]
 - [Getting started](documentation/getting-started.md): a first agent in code and with a rulebook, then a complete example
   agent that extracts and files a document's snippets with a model.
 - [Concepts](documentation/concepts.md): the loop, choices, outcomes, the trace and the options.
-- [Rulebooks](documentation/rulebooks.md): the rulebook format, the registry, checks and fixtures.
+- [Rulebooks](documentation/rulebooks.md): the rulebook format, the registry, checks and fixtures, and a rulebook used
+  on its own as a decision function (`rules.decide`).
 - API reference: [`@belaykit/core`](documentation/api/core.md), [`@belaykit/rulebook`](documentation/api/rulebook.md).
 - [`examples/doc-processor`](examples/doc-processor): the example agent, written with and without a rulebook.
+- [Upgrading](documentation/upgrading.md) from an earlier version, and the [changelog](CHANGELOG.md).
 
 ## Packages
 
@@ -65,7 +67,8 @@ completed [ 'urgent' ]
 
 ## Status
 
-v0.1, the first release. The API may change, but changes will be deliberate.
+0.2. The API may change before 1.0, but changes will be deliberate, and each is listed in the
+[changelog](CHANGELOG.md), with what to do in [Upgrading](documentation/upgrading.md).
 
 ## License
 

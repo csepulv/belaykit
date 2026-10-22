@@ -3,10 +3,12 @@
 // ws.<key>, from a selectFirst binding, and from a macro's variable, so a misspelled field
 // is a load error. Checking stops where a shape stops saying: an open object, a key
 // without a shape, a non-local $ref.
+import { helperPathCallOf, pathProblem } from './helpers.js';
 import { compileProblem, makeAjv } from './json-schema.js';
 
 // Macros that bind a variable to each item of their receiver: `list.exists(x, …)`.
 const BINDING_MACROS = new Set(['all', 'exists', 'exists_one', 'map', 'filter']);
+const COMPARISONS = new Set(['==', '!=', 'in']);
 const OPEN = Symbol('open');
 
 // The registry's shapes, as checked: a shape must be for a declared key and must compile.
@@ -55,8 +57,75 @@ function visit(node, context) {
     return;
   }
   if (node.op === 'call' && context.keyArgsByName.has(node.args[0])) checkKeyArg(node, context);
+  const helperPathCall = helperPathCallOf(node);
+  if (helperPathCall) checkHelperPath(helperPathCall, context);
+  if (COMPARISONS.has(node.op)) checkComparedLiterals(node, context);
   for (const child of childNodesOf(node.args)) visit(child, context);
 }
+
+// `field == "x"`, `"x" != field`, `field in ["x", "y"]`: where the field's shape lists the values
+// it allows (`enum`, `const`), each string literal must be one of them. The field is resolved
+// quietly here: a misspelled field is the walk's to report, once.
+function checkComparedLiterals(node, context) {
+  const { field, literals = [] } = comparedLiterals(node);
+  if (!field || literals.length === 0) return;
+  const base = resolve(field, { ...context, errors: [] });
+  if (base === null || base === 'ws') return;
+  const allowed = allowedValuesOf(base.shape.schema, base.shape.root);
+  if (allowed === null) return;
+  for (const literal of new Set(literals.filter((value) => !allowed.includes(value)))) {
+    const where = `${base.label}${base.origin ? ` (${base.origin})` : ''}`;
+    context.errors.push(`${where} is compared with ${JSON.stringify(literal)}, which its shape doesn't allow (${allowed.map(describeAllowed).join(', ') || 'none'})`);
+  }
+}
+
+function comparedLiterals({ op, args: [left, right] }) {
+  if (op === 'in') return { field: left, literals: right.op === 'list' ? right.args.map(literalStringOf).filter((value) => value !== null) : [] };
+  if (literalStringOf(right) !== null) return { field: left, literals: [literalStringOf(right)] };
+  if (literalStringOf(left) !== null) return { field: right, literals: [literalStringOf(left)] };
+  return {};
+}
+
+// Every value a schema allows, or null when it allows any. A schema's own `enum` or `const`, its
+// `anyOf`/`oneOf` (the union of its branches) and its `allOf` (the intersection) each restrict
+// it, and all of them apply; a part that restricts nothing (`{ type: 'string', minLength: 1 }`)
+// lifts no other's restriction. A `null` branch adds no value: it allows no string. A schema
+// reached again through its own branches stops the check, as in variantsOf.
+function allowedValuesOf(schema, root, seen = new Set()) {
+  const resolved = deref(schema, root);
+  if (resolved === OPEN || resolved === true || resolved === undefined || seen.has(resolved)) return null;
+  if (resolved === false || isNullOnly(resolved)) return [];
+  const inside = new Set(seen).add(resolved);
+  const restrictions = [
+    ownValuesOf(resolved),
+    unionOf(['anyOf', 'oneOf'].flatMap((keyword) => resolved[keyword] ?? []).map((branch) => allowedValuesOf(branch, root, inside))),
+    intersectionOf((resolved.allOf ?? []).map((branch) => allowedValuesOf(branch, root, inside))),
+  ];
+  return intersectionOf(restrictions);
+}
+
+const isNullOnly = (schema) => {
+  const types = [schema.type].flat().filter(Boolean);
+  return types.length === 1 && types[0] === 'null' && !Array.isArray(schema.enum) && !Object.hasOwn(schema, 'const');
+};
+
+function ownValuesOf(schema) {
+  if (Array.isArray(schema.enum)) return schema.enum;
+  return Object.hasOwn(schema, 'const') ? [schema.const] : null;
+}
+
+// Null (allows any) when there are no branches, or when any branch allows any.
+const unionOf = (branches) => (branches.length === 0 || branches.includes(null) ? null : [...new Set(branches.flat())]);
+
+// Null (allows any) when nothing restricts; otherwise the values every restriction allows.
+function intersectionOf(restrictions) {
+  const restricting = restrictions.filter((values) => values !== null);
+  if (restricting.length === 0) return null;
+  const [first, ...rest] = restricting;
+  return [...new Set(first)].filter((value) => rest.every((values) => values.includes(value)));
+}
+
+const describeAllowed = (value) => (typeof value === 'string' ? value : JSON.stringify(value));
 
 // `list.exists(s, body)`: `s` is an item of `list` inside the body, and nowhere else. (cel-js
 // has no two-variable form, `list.all(i, s, …)`: it reports `i` as an unknown variable.)
@@ -74,6 +143,17 @@ function checkKeyArg(node, context) {
   const keyName = argumentNodes[key] ? literalStringOf(argumentNodes[key]) : null;
   if (keyName === null || !argumentNodes[container]) return;
   step(resolve(argumentNodes[container], context), keyName, context);
+}
+
+// belaykit.present(ws.facts, "recurrence.answer") reads ws.facts.recurrence.answer, so each key is a
+// step through the shapes, and a problem names the helper's path. The container is resolved quietly: as an
+// argument it's visited, and reported, once. A path that isn't a literal, or has an empty key, is load.js's.
+function checkHelperPath({ name, container, path }, context) {
+  const keys = literalStringOf(path)?.split('.');
+  if (!keys || keys.includes('')) return;
+  const errors = [];
+  keys.reduce((base, key) => step(base, key, { ...context, errors }), resolve(container, { ...context, errors: [] }));
+  context.errors.push(...errors.map((error) => pathProblem(name, path.args, error)));
 }
 
 // What an expression node reads: `{ shape, label }`, the ws root, or null when unchecked.

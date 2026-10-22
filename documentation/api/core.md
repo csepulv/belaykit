@@ -8,7 +8,7 @@ Every export of `@belaykit/core`, in the order [Concepts](../concepts.md) introd
 declarations (`.d.ts`) shipped with the package; the package itself is JavaScript with no dependencies.
 
 ```js fragment
-import { Agent, always, chain, IterationLimitError } from '@belaykit/core';
+import { Agent, always, chain, IterationLimitError, version } from '@belaykit/core';
 // or, beside another library's Agent:
 import * as belay from '@belaykit/core';   // new belay.Agent(...)
 ```
@@ -213,7 +213,6 @@ interface TraceEntry {
   set: string;                     // the choice set's name, or `set <iteration>`
   mode?: string;                   // once the provider has returned a set
   fired: string[];                 // selected choices whose actions all completed
-  durationMs: number;
   evaluated: EvaluatedChoice[];    // every criterion that ran, in order, across both groups
   unevaluated: string[];           // choices whose criteria never ran
   executed: { choice: string; action: number }[];   // each action that completed, by index
@@ -223,7 +222,9 @@ interface TraceEntry {
 
 One iteration as the loop saw it: the default trace entry, and what a tracer receives. It's started after the finish
 check, filled in as the iteration runs, and kept as the iteration ends, so an iteration that fails leaves a partial
-entry. A `no_match` iteration is recorded with `fired: []`. `unevaluated` is empty when a set's mode is unknown.
+entry. A `no_match` iteration is recorded with `fired: []`. `unevaluated` is empty when a set's mode is unknown. It
+holds only what the run decided, so two runs of the same subject give the same default trace; what was measured, such
+as the iteration's duration, reaches the tracer beside it ([`TraceContext`](#tracecontext)).
 
 ### `EvaluatedChoice`
 
@@ -261,9 +262,34 @@ ends `failed` with an `IterationLimitError`, whose message names the limit.
 ### `Tracer`
 
 ```ts
-type Tracer<Entry> = (entry: TraceEntry, context: { matches: CriterionMatch[] }) => Entry | null | undefined;
+type Tracer<Entry> = (entry: TraceEntry, context: TraceContext) => Entry | null | undefined;
 ```
 
 What to keep of an iteration, called as it ends (a failed one included): the entry, a reshaped entry, or `null` or
-`undefined` to keep nothing for it. A tracer that throws ends the run `failed`, unless the iteration had already failed: then the run
-keeps its own error, and that entry is kept as is. This is BelayKit's own trace hook, not OpenTelemetry's `tracer`.
+`undefined` to keep nothing for it. To keep timings, add them from the context:
+`(entry, { durationMs }) => ({ ...entry, durationMs })`. A tracer that throws ends the run `failed`, unless the
+iteration had already failed: then the run keeps its own error, and that entry is kept as the tracer received it (with any change the tracer made to it). This is
+BelayKit's own trace hook, not OpenTelemetry's `tracer`.
+
+### `TraceContext`
+
+```ts
+interface TraceContext {
+  matches: CriterionMatch[];   // each criterion that returned a valid result, data included
+  durationMs: number;          // how long the iteration took, in whole milliseconds
+}
+```
+
+What a tracer receives beside the entry: what was measured rather than decided, kept out of the default entry so the
+default trace is the same on every run of the same subject.
+
+## Version
+
+### `version`
+
+```ts
+const version: string;
+```
+
+The package's version, as in its `package.json` (`belaykit` exports its own, the same number). It names the release,
+not the installed files: a locally edited copy reports the same version.

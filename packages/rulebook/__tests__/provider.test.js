@@ -36,10 +36,10 @@ async function runRulebook(rowFound) {
 }
 
 describe('rulebook.initialize', () => {
-  test('declared keys start null beside the agent\'s own; nothing is gathered yet', () => {
+  test('the agent\'s own keys only: a declared key is absent until it is gathered', () => {
     const rulebook = Rulebook.fromText(RULEBOOK, makeRegistry(false));
 
-    expect(rulebook.initialize({ item: 'x', write: null })).toEqual({ item: 'x', existing_row: null, write: null, gathered: [] });
+    expect(rulebook.initialize({ item: 'x', write: null })).toEqual({ item: 'x', write: null });
   });
 });
 
@@ -57,7 +57,7 @@ describe('rulebook.provider', () => {
   test('a producer that finds nothing is gathered with a null value, not treated as a stall', async () => {
     const outcome = await runRulebook(false);
 
-    expect(outcome.workingSet.gathered).toEqual(['existing_row']);
+    expect(Object.hasOwn(outcome.workingSet, 'existing_row')).toBe(true);
     expect(outcome.workingSet.existing_row).toBeNull();
     expect(outcome.workingSet.write).toBe('created');
   });
@@ -66,7 +66,7 @@ describe('rulebook.provider', () => {
     const registry = makeRegistry(false);
     const provider = Rulebook.fromText(RULEBOOK, registry).provider();
 
-    expect(await provider({ write: 'done', existing_row: null, gathered: [] })).toBeNull();
+    expect(await provider({ write: 'done', existing_row: null })).toBeNull();
   });
 
   test('a gather-only section stops claiming the working set once its needs are met', async () => {
@@ -74,6 +74,6 @@ describe('rulebook.provider', () => {
     const registry = makeRegistry(true);
     const provider = Rulebook.fromText(text, registry).provider();
 
-    expect(await provider({ existing_row: 'row-1', write: null, gathered: ['existing_row'] })).toBeNull();
+    expect(await provider({ existing_row: 'row-1', write: null })).toBeNull();
   });
 });

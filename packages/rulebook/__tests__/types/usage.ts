@@ -2,9 +2,9 @@
 // under `bundler` and `nodenext` resolution. Never run. Each @ts-expect-error is a
 // wrong usage the contract must reject; if one compiles, the check fails.
 import { Agent, always, chain } from '@belaykit/core';
-import { describeFunctions, loadFixture, Rulebook } from '@belaykit/rulebook';
+import { describeFunctions, loadFixture, Rulebook, schemaVersions, version } from '@belaykit/rulebook';
 import type {
-  ActionContext, Fixture, FixtureRun, JsonSchema, Producer, RegisteredAction, RegisteredFunction, Registry, Rule,
+  ActionContext, Decision, Fixture, FixtureRun, JsonSchema, Producer, RegisteredAction, RegisteredFunction, Registry, Rule,
   Section, SelectedItem, WorkingSet,
 } from '@belaykit/rulebook';
 
@@ -64,12 +64,30 @@ export const alone = new Agent<Subject, State>({
 export async function describeRun(): Promise<string> {
   const outcome = await agent.run({ item: 'x' });
   if (outcome.status === 'failed') return outcome.error.message;
+  // @ts-expect-error a working set has no `gathered` since 0.2: a needs key is gathered when present
   const gathered: string[] = outcome.workingSet.gathered;
-  return `${outcome.status}: ${gathered.join(',')}`;
+  return `${outcome.status}: ${'existing_row' in outcome.workingSet}, ${gathered}`;
 }
+
+// A guarded action: a rule may name it, but it runs only while its guard holds.
+export const guarded: RegisteredAction<Deps> = { writes: ['write'], guard: 'has(ws.existing_row)', run: async (ws) => { ws.write = 'updated'; } };
+// @ts-expect-error a guard is one CEL expression, not a list
+export const guardList: RegisteredAction<Deps> = { guard: ['has(ws.existing_row)'], run: async () => {} };
 
 // An action that has a key gathered again.
 export const recheck: RegisteredAction<Deps> = { run: async (ws) => rulebook.regather(ws, 'existing_row') };
+
+// A decision: the outputs once completed, a reason otherwise.
+export async function describeDecision(): Promise<string> {
+  const decision: Decision = await rulebook.decide({ item: 'x' }, { deps: { findRow: async () => null }, maxIterations: 10 });
+  if (decision.status === 'completed') return JSON.stringify(decision.outputs);
+  // @ts-expect-error only a completed decision has outputs
+  const outputs = decision.outputs;
+  return `${decision.status}: ${decision.error} ${outputs}`;
+}
+
+// @ts-expect-error decide takes deps and maxIterations, not a tracer
+export const decidedWithTracer = rulebook.decide({}, { tracer: false });
 
 // @ts-expect-error a rulebook is made by load or fromText
 export const constructed = new Rulebook();
@@ -184,6 +202,11 @@ export const errorIsText: Fixture = {
   // @ts-expect-error an expected error is a substring of the message
   expect: { status: 'failed', error: 42 },
 };
+
+export const rulebookVersion: string = version;
+export const readableVersions: readonly number[] = schemaVersions;
+// @ts-expect-error schemaVersions is read-only
+schemaVersions.push(2);
 
 // @ts-expect-error the old functions (loadStageFile, yamlProvider, …) are gone; Rulebook replaces them
 export { loadStageFile, yamlProvider } from '@belaykit/rulebook';

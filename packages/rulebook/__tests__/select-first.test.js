@@ -9,6 +9,7 @@ version: 1
 sections:
   - name: nodes
     when: ws.status == null
+    exhaustive: false
     rules:
       - id: probe_unknown
         selectFirst: { node: ws.nodes }

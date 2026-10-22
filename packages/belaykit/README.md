@@ -1,7 +1,7 @@
 # belaykit
 
-**BelayKit** under its plain name. This package re-exports [`@belaykit/core`](https://github.com/csepulv/belaykit/tree/main/packages/core)
-unchanged: the same `Agent`, `chain`, `always` and `IterationLimitError`, with the core as its only dependency. Install
+**BelayKit** under its plain name. This package re-exports [`@belaykit/core`](https://github.com/csepulv/belaykit/tree/main/packages/core):
+the same `Agent`, `chain`, `always` and `IterationLimitError`, with the core as its only dependency (its `version` is its own). Install
 whichever name you prefer; the docs use `@belaykit/core`.
 
 ```bash

@@ -1,7 +1,7 @@
 {
   "name": "docs-check",
-  "version": "0.1.0",
-  "description": "Checks BelayKit's public docs: their examples run, their links resolve, every export is documented, and they use v0.1's vocabulary.",
+  "version": "0.2.0",
+  "description": "Checks BelayKit's public docs: their examples run, their links resolve, every export is documented, and they use the current vocabulary.",
   "private": true,
   "license": "MIT",
   "type": "module",

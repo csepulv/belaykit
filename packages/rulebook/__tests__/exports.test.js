@@ -9,7 +9,7 @@ const RULEBOOK = `
 version: 1
 sections:
   - name: lookup
-    when: ws.write == null && ws.existing_row == null
+    when: ws.write == null && !has(ws.existing_row)
     needs:
       existing_row: find_row
   - name: judge
@@ -44,7 +44,7 @@ function runAgent(row) {
 const firedBySet = (trace) => trace.map(({ set, fired }) => `${set}:${fired.join(',')}`);
 
 test('the package entry exports the public API', () => {
-  expect(Object.keys(rulebookPackage).sort()).toEqual(['Rulebook', 'describeFunctions', 'loadFixture']);
+  expect(Object.keys(rulebookPackage).sort()).toEqual(['Rulebook', 'describeFunctions', 'loadFixture', 'schemaVersions', 'version']);
 });
 
 describe('a checked rulebook runs on the core, chained with a code provider', () => {
@@ -52,7 +52,8 @@ describe('a checked rulebook runs on the core, chained with a code provider', ()
     const outcome = await runAgent('row-1');
 
     expect(outcome.status).toBe('completed');
-    expect(outcome.workingSet).toMatchObject({ existing_row: 'row-1', write: 'updated', gathered: ['existing_row'] });
+    expect(outcome.workingSet).toMatchObject({ existing_row: 'row-1', write: 'updated' });
+    expect(outcome.workingSet).not.toHaveProperty('gathered');
     expect(firedBySet(outcome.trace)).toEqual(['lookup:gather existing_row', 'judge:judge#1']);
   });
 
@@ -70,7 +71,7 @@ const TRIAGE_RULEBOOK = `# triage.rules.yaml
 version: 1
 sections:
   - name: gather
-    when: '!("classification" in ws.gathered)'
+    when: '!has(ws.classification)'
     needs: { classification: classify_item }        # a producer fills ws.classification
   - name: decide
     when: ws.routing == null

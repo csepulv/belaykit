@@ -16,7 +16,7 @@ Each run goes like this:
 
 1. The **initializer** builds a **working set** from the subject. The working set is the run's state, and it's
    yours: the loop never writes to it, only actions do. (A [rulebook](rulebooks.md) supplies actions of its own,
-   which fill the keys it gathers and its `gathered` list.)
+   which fill the keys it gathers.)
 2. The **finish checker** looks at the working set. If it says the run is done, the run ends `completed`.
 3. Otherwise the **choice provider** looks at the working set and returns a **choice set**: the choices that make
    sense now.
@@ -151,7 +151,7 @@ a set claims it, and the chain itself returns `null` when none does. That's how 
 situations, hands the rest to code:
 
 ```mermaid
-flowchart LR
+flowchart TD
     WS(["working set"]) --> First["first provider"]
     First -->|"a choice set"| Claimed(["the iteration's<br/>choice set"])
     First -->|"null"| Next["next provider"]
@@ -221,7 +221,7 @@ subject per item and record failed outcomes. [Getting started](getting-started.m
 Every iteration leaves a **trace entry**, returned beside the working set, never stored in it:
 
 ```js fragment
-{ iteration, set, mode, fired, durationMs,
+{ iteration, set, mode, fired,
   evaluated: [{ choice, matched, why?, detail? } | { choice, error, why? }],  // every criterion that ran, in order
   unevaluated: [name],                                                     // choices whose criteria never ran
   executed: [{ choice, action }],                                          // each action that completed, by index
@@ -229,14 +229,17 @@ Every iteration leaves a **trace entry**, returned beside the working set, never
 ```
 
 An iteration that fails still leaves its partial entry, so a failed run shows where it stopped. A criterion's
-`detail` is recorded; its `data` never is.
+`detail` is recorded; its `data` never is. An entry holds only what the run decided, so two runs that decide the
+same way leave the same trace, and you can store it, compare it or derive an id from it. What was measured, such as
+how long an iteration took, reaches the tracer beside the entry (below), for an agent that wants to keep it.
 
 ## Options (incidental)
 
 The options are the second argument to `new Agent`. Most agents need neither.
 
-- **`tracer`** decides what to keep of each iteration's trace entry: `(entry, { matches }) => kept`, where `matches`
-  holds every criterion result of that iteration, `data` included. What it returns is kept; `null` or `undefined`
+- **`tracer`** decides what to keep of each iteration's trace entry: `(entry, { matches, durationMs }) => kept`,
+  where `matches` holds every criterion result of that iteration, `data` included, and `durationMs` is how long the
+  iteration took. To keep timings, add them: `(entry, { durationMs }) => ({ ...entry, durationMs })`. What it returns is kept; `null` or `undefined`
   (a tracer with no `return`) keeps nothing for that iteration; `tracer: false` keeps no trace at all. By default every entry is kept as is. (This `tracer` is
   BelayKit's own hook for its trace; it isn't OpenTelemetry's `tracer`, though a tracer could forward entries to one.)
 - **`maxIterations`** (default 25) guards against a run that never finishes: a run that hasn't finished after that
@@ -262,12 +265,33 @@ console.log((await agent.run()).trace);
 [ 1, 2, 3 ]
 ```
 
+The default entry has no timing; a tracer that wants it takes it from the second argument:
+
+```js run
+import { Agent, always } from '@belaykit/core';
+
+const agentWith = (options) => new Agent({
+  initializer: () => ({ count: 0 }),
+  choiceProvider: async () => ({ name: 'count', mode: 'first', choices: [{ name: 'step', criteria: always, actions: [async (ws) => { ws.count += 1; }] }] }),
+  finishChecker: (ws) => ws.count === 1,
+}, options);
+
+const [plain] = (await agentWith().run()).trace;
+const [timed] = (await agentWith({ tracer: (entry, { durationMs }) => ({ ...entry, durationMs }) }).run()).trace;
+console.log('durationMs' in plain, Number.isInteger(timed.durationMs));
+```
+
+```text output
+false true
+```
+
 ## Rulebooks
 
 A **rulebook** writes an agent's decisions as text: a YAML file of **sections** and **rules** with CEL conditions,
 checked when it loads against your agent's **registry** of producers, actions and functions. A loaded `Rulebook`
-gives you a choice provider, so it fits the loop like any other provider and chains with code. See
-[Rulebooks](rulebooks.md).
+gives you a choice provider, so it fits the loop like any other provider and chains with code. A rulebook that
+declares its outputs can also run on its own, as a decision function
+([`rules.decide`](rulebooks.md#deciding-with-a-rulebook)). See [Rulebooks](rulebooks.md).
 
 ## Glossary
 

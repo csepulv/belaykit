@@ -16,7 +16,7 @@ version: 1
 hitPolicyDefault: FIRST
 sections:
   - name: classify
-    when: ws.write == null && !("classification" in ws.gathered)
+    when: ws.write == null && !has(ws.classification)
     needs:
       classification: classify_item
     hitPolicy: ALL

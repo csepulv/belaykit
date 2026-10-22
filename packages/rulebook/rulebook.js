@@ -1,6 +1,7 @@
 // A rulebook: a YAML + CEL file of sections and rules, checked at load against the
 // agent's registry, which it keeps. It provides the agent's choices, the working set's
-// starting keys, re-gathering, and fixture runs. Its CEL environment stays inside it.
+// starting keys, re-gathering, fixture runs, and decisions. Its CEL environment stays inside it.
+import { decide } from './decide.js';
 import { runFixture } from './fixture.js';
 import { checkRulebook, loadRulebook, loadRulebookText } from './load.js';
 import { initialWorkingSet, rulebookProvider } from './provider.js';
@@ -9,6 +10,7 @@ import { initialWorkingSet, rulebookProvider } from './provider.js';
 const CHECKED = Symbol('checked rulebook');
 
 const FIXTURE_OPTIONS = ['fixture', 'deps', 'finishChecker', 'finalizer', 'maxIterations'];
+const DECIDE_OPTIONS = ['deps', 'maxIterations'];
 
 export class Rulebook {
   #loaded;
@@ -52,14 +54,13 @@ export class Rulebook {
     return rulebookProvider(this.#loaded, this.#registry, deps);
   }
 
-  // Under the presence model a key is gathered once; this has its section gather it again.
+  // A key is gathered while it is present; removing it has its section gather it again.
   regather(workingSet, key) {
     const { declaredKeys } = this.#loaded;
     if (!declaredKeys.includes(key)) {
       throw new TypeError(`regather: "${key}" is not a needs key of this rulebook (needs keys: ${declaredKeys.join(', ')})`);
     }
-    workingSet[key] = null;
-    workingSet.gathered = workingSet.gathered.filter((gathered) => gathered !== key);
+    delete workingSet[key];
   }
 
   async runFixture(options = {}) {
@@ -71,6 +72,17 @@ export class Rulebook {
       if (!options?.[required]) throw new TypeError(`rulebook.runFixture: "${required}" is required`);
     }
     return runFixture({ ...options, loaded: this.#loaded, registry: this.#registry });
+  }
+
+  // Runs until every declared output is present; always resolves, but a rulebook without
+  // outputs, or an option it doesn't take, is the caller's mistake.
+  async decide(initial, options = {}) {
+    if (this.#loaded.outputs === null) throw new TypeError('rulebook.decide: this rulebook declares no outputs');
+    const unknown = Object.keys(options ?? {}).find((key) => !DECIDE_OPTIONS.includes(key));
+    if (unknown !== undefined) {
+      throw new TypeError(`rulebook.decide: unknown option "${unknown}" (options: ${DECIDE_OPTIONS.join(', ')})`);
+    }
+    return decide({ ...options, initial, loaded: this.#loaded, registry: this.#registry });
   }
 }
 

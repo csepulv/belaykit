@@ -34,7 +34,6 @@ describe('a completed iteration', () => {
       set: 'judge',
       mode: 'first',
       fired: ['take'],
-      durationMs: expect.any(Number),
       evaluated: [{ choice: 'skip', matched: false, why: 'not this one' }, { choice: 'take', matched: true }],
       unevaluated: ['later'],
       executed: [{ choice: 'take', action: 0 }, { choice: 'take', action: 1 }],
@@ -103,7 +102,6 @@ describe('an iteration that fails leaves a partial entry', () => {
       set: 'review',
       mode: 'first_then_all',
       fired: [],
-      durationMs: expect.any(Number),
       evaluated: [{ choice: 'fast', matched: true }, { choice: 'lookup', error: 'search unavailable', why: 'needs the index' }],
       unevaluated: ['after'],
       executed: [],
@@ -151,7 +149,7 @@ describe('an iteration that fails leaves a partial entry', () => {
     }).run({});
 
     expect(outcome.trace).toEqual([{
-      iteration: 1, set: 'set 1', fired: [], durationMs: expect.any(Number), evaluated: [], unevaluated: [], executed: [], failed: true,
+      iteration: 1, set: 'set 1', fired: [], evaluated: [], unevaluated: [], executed: [], failed: true,
     }]);
     expect(outcome.trace[0]).not.toHaveProperty('mode');
     expect(outcome.error.trace).toBe(outcome.trace);

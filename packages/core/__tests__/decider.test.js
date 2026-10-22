@@ -118,7 +118,7 @@ describe('agent lifecycle', () => {
     expect(outcome.status).toBe('no_match');
     expect(outcome.workingSet.done).toBe(false);
     expect(outcome.trace).toEqual([{
-      iteration: 1, set: 'judge', mode: 'all', fired: [], durationMs: expect.any(Number),
+      iteration: 1, set: 'judge', mode: 'all', fired: [],
       evaluated: [{ choice: 'x', matched: false }], unevaluated: [], executed: [],
     }]);
   });
@@ -204,7 +204,7 @@ describe('agent lifecycle', () => {
     });
 
     expect(outcome.trace).toEqual([{
-      iteration: 1, set: 'judge', mode: 'all', fired: ['finish'], durationMs: expect.any(Number),
+      iteration: 1, set: 'judge', mode: 'all', fired: ['finish'],
       evaluated: [{ choice: 'skip', matched: false }, { choice: 'finish', matched: true }],
       unevaluated: [],
       executed: [{ choice: 'finish', action: 0 }],

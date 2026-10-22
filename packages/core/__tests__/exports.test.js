@@ -5,7 +5,7 @@ import * as core from '@belaykit/core';
 const { Agent, always } = core;
 
 test('the package entry exports the public API', () => {
-  expect(Object.keys(core).sort()).toEqual(['Agent', 'IterationLimitError', 'always', 'chain']);
+  expect(Object.keys(core).sort()).toEqual(['Agent', 'IterationLimitError', 'always', 'chain', 'version']);
 });
 
 test('the README usage example runs to completed', async () => {

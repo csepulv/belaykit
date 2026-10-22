@@ -18,7 +18,7 @@ const rules = Rulebook.fromText(`
 version: 1
 sections:
   - name: gather
-    when: '!("classification" in ws.gathered)'
+    when: '!has(ws.classification)'
     needs: { classification: classify_item }
   - name: decide
     when: ws.routing == null
@@ -75,8 +75,10 @@ npx belaykit-rulebook check rulebooks/*.rules.yaml --registry src/registry.js#re
 
 ## Learn more
 
-- [Rulebooks](https://github.com/csepulv/belaykit/blob/main/documentation/rulebooks.md): the format, `needs` and `gathered`,
-  `selectFirst`, CEL and registered functions, the registry, checks, fixtures, `regather`.
+- [Rulebooks](https://github.com/csepulv/belaykit/blob/main/documentation/rulebooks.md): the format, `needs` keys (gathered when present),
+  `selectFirst`, CEL, BelayKit's helpers and registered functions, the registry (guarded actions included), checks,
+  the catch-all rule, fixtures,
+  `regather`, and deciding with `rules.decide`.
 - [Getting started](https://github.com/csepulv/belaykit/blob/main/documentation/getting-started.md): an agent written in code
   and with a rulebook.
 - [API reference](https://github.com/csepulv/belaykit/blob/main/documentation/api/rulebook.md)

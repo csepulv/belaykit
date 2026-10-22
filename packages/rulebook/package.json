@@ -1,6 +1,6 @@
 {
   "name": "@belaykit/rulebook",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "BelayKit rulebooks: sections of YAML + CEL rules, checked at load against the agent's registry, as a ChoiceProvider.",
   "license": "MIT",
   "author": "Christian Sepulveda <dev@justideas.io>",
@@ -31,7 +31,7 @@
     "yaml": "^2.9.1"
   },
   "peerDependencies": {
-    "@belaykit/core": "^0.1.0"
+    "@belaykit/core": "^0.2.0"
   },
   "devDependencies": {
     "@belaykit/core": "workspace:*",

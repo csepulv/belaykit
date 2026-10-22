@@ -10,17 +10,18 @@ const registry = {
   producers: { classify_item: { writes: ['classification'] } },
   actions: { settle: { writes: ['routing'] } },
   functions: [{ signature: 'app_isBlank(string): bool', handler: (text) => !text.trim() }],
-  initialKeys: ['item', 'routing'],
+  initialKeys: ['item', 'routing', 'tags'],
 };
 
 const rulebook = ({ when = 'ws.routing == null', rule = '' } = {}) => `
 version: 1
 sections:
   - name: gather
-    when: '!("classification" in ws.gathered)'
+    when: '!has(ws.classification)'
     needs: { classification: classify_item }
   - name: decide
     when: ${JSON.stringify(when)}
+    exhaustive: false
     rules:
       - id: urgent
         when: ws.classification.urgent == true
@@ -46,7 +47,7 @@ describe('unknown functions', () => {
   });
 
   test('CEL\'s built-in functions and macros are known', () => {
-    const when = '"x" in ws.gathered && size(ws.gathered) > 0 && ws.gathered.exists(g, g.startsWith("a")) && ws.gathered.all(g, g.lowerAscii() == g) && ws.gathered.exists_one(g, g == "a") && size(ws.gathered.filter(g, g == "a").map(g, g.trim())) == 1 && has(ws.item.x)';
+    const when = '"x" in ws.tags && size(ws.tags) > 0 && ws.tags.exists(g, g.startsWith("a")) && ws.tags.all(g, g.lowerAscii() == g) && ws.tags.exists_one(g, g == "a") && size(ws.tags.filter(g, g == "a").map(g, g.trim())) == 1 && has(ws.item.x)';
     expect(problemsOf(rulebook({ when }))).toEqual([]);
   });
 });

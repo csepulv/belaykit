@@ -1,10 +1,12 @@
 // Type-check fixture for the core's .d.ts contracts, compiled by `pnpm run check:types`
 // under `bundler` and `nodenext` resolution. Never run. Each @ts-expect-error is a
 // wrong usage the contracts must reject; if one compiles, the check fails.
-import { Agent, always, chain, IterationLimitError } from '@belaykit/core';
+import { Agent, always, chain, IterationLimitError, version } from '@belaykit/core';
+
+export const coreVersion: string = version;
 import type {
   Action, AgentEssentials, AgentOptions, Choice, ChoiceProvider, ChoiceSet, Criteria, CriteriaResult, CriterionMatch,
-  EvaluatedChoice, Finalizer, FinishChecker, Initializer, Outcome, RunError, TraceEntry, Tracer,
+  EvaluatedChoice, Finalizer, FinishChecker, Initializer, Outcome, RunError, TraceContext, TraceEntry, Tracer,
 } from '@belaykit/core';
 
 interface Application {
@@ -107,6 +109,11 @@ interface Step {
 const finalizer: Finalizer<State, Decision> = async (ws) => ({ approved: ws.approved === true });
 const tracer: Tracer<Step> = (entry: TraceEntry, { matches }: { matches: CriterionMatch[] }) =>
   (entry.fired.length === 0 ? null : { set: entry.set, score: matches[0]?.result.data });
+
+// Timings are the tracer's to add: they reach it in the context, not in the entry.
+export const timed: Tracer<TraceEntry & { durationMs: number }> = (entry, { durationMs }: TraceContext) => ({ ...entry, durationMs });
+// @ts-expect-error the default entry has no durationMs
+export const untimed = (entry: TraceEntry): number => entry.durationMs;
 
 const decisionAgent = new Agent<Application, State, Decision, Step>({
   initializer: (subject) => ({ subject, approved: null }),

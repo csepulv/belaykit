@@ -8,7 +8,7 @@ const RULEBOOK = `
 version: 1
 sections:
   - name: gather
-    when: '!("evidence" in ws.gathered)'
+    when: '!has(ws.evidence)'
     needs:
       evidence: collect
   - name: decide
@@ -27,10 +27,10 @@ const registryWith = (evidence) => ({
 });
 
 describe('no assumed verdict', () => {
-  test('the working set starts with the agent\'s keys, declared needs and gathered, and no verdict', () => {
+  test('the working set starts with the agent\'s keys alone, and no verdict', () => {
     const rulebook = Rulebook.fromText(RULEBOOK, registryWith('confirmed'));
 
-    expect(rulebook.initialize({ case_id: 'c-1', status: null })).toEqual({ case_id: 'c-1', status: null, evidence: null, gathered: [] });
+    expect(rulebook.initialize({ case_id: 'c-1', status: null })).toEqual({ case_id: 'c-1', status: null });
   });
 
   test('a rulebook that ends by its own status runs to completed', async () => {
@@ -43,7 +43,7 @@ describe('no assumed verdict', () => {
     }).run({ case_id: 'c-1' });
 
     expect(outcome.status).toBe('completed');
-    expect(outcome.workingSet).toEqual({ case_id: 'c-1', status: 'closed', evidence: 'confirmed', gathered: ['evidence'] });
+    expect(outcome.workingSet).toEqual({ case_id: 'c-1', status: 'closed', evidence: 'confirmed' });
   });
 
   test('ws.verdict and ws.trace are unknown fields unless the agent declares them', () => {

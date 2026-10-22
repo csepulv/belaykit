@@ -19,6 +19,7 @@ version: 1
 sections:
   - name: route
     when: "true"
+    exhaustive: false
     rules:
       - when: '${when}'
         then: { action: flag }

@@ -67,12 +67,24 @@ export interface CriterionMatch {
 }
 
 /**
- * What to keep of an iteration, called as it ends (a failed one included): the entry, a
- * reshaped entry, or `null` to keep nothing for it. A tracer that throws ends the run
- * `failed`, unless the iteration had already failed: then the run keeps its own error,
- * and that entry is kept as is.
+ * What a tracer receives beside the entry: what was measured, not decided, so it stays out of
+ * the default entry and the default trace is the same on every run of the same subject.
  */
-export type Tracer<Entry> = (entry: TraceEntry, context: { matches: CriterionMatch[] }) => Entry | null | undefined;
+export interface TraceContext {
+  /** Each criterion that returned a valid result, `data` included. */
+  matches: CriterionMatch[];
+  /** How long the iteration took, in whole milliseconds. */
+  durationMs: number;
+}
+
+/**
+ * What to keep of an iteration, called as it ends (a failed one included): the entry, a
+ * reshaped entry, or `null` to keep nothing for it. To keep timings, add them from the
+ * context: `(entry, { durationMs }) => ({ ...entry, durationMs })`. A tracer that throws ends
+ * the run `failed`, unless the iteration had already failed: then the run keeps its own error,
+ * and that entry is kept as the tracer received it (with any change the tracer made to it).
+ */
+export type Tracer<Entry> = (entry: TraceEntry, context: TraceContext) => Entry | null | undefined;
 
 /** What makes the agent this agent. */
 export interface AgentEssentials<Subject, State, Result = State> {
@@ -111,7 +123,6 @@ export interface TraceEntry {
   mode?: string;
   /** Selected choices whose actions all completed. */
   fired: string[];
-  durationMs: number;
   /** Every criterion that ran, in order, across both groups of a combined set. */
   evaluated: EvaluatedChoice[];
   /**

@@ -73,6 +73,8 @@ next:
 | Best effort: one snippet's failure doesn't end the run | `steps.js`, `classifyAt` |
 | A rulebook: sections, rules, hit policies, `selectFirst`, `needs` | `rules/doc-processor.rules.yaml` |
 | A registry: producers, actions, CEL functions, initial keys | `src/registry.js` |
+| A guarded action: no rulebook edit can classify (call the model) before the code check accepts the segmentation | `src/registry.js`, `classify_snippet`'s `guard` |
+| A templated param: the ambiguity flag's wording lives in the rulebook, filled from the selected snippet | `flag_ambiguity`'s `templates`, and its rule in `rules/doc-processor.rules.yaml` |
 | `chain`: a rulebook handing the gap to code | `agent-rulebook.js` |
 | `rules.regather`: asking for a gathered key again | `agent-rulebook.js`, `makeCheckProvider` |
 | Checking a rulebook before it runs | `pnpm run check` (`belaykit-rulebook check`) |

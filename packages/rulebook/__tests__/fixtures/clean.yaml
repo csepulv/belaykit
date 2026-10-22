@@ -4,6 +4,7 @@ sections:
     when: app_state(ws, "item") == "present"
     needs:
       classification: classify_item
+    exhaustive: false
     rules:
       - when: '!app_isBlank(ws.item)'
         then: { action: flag }

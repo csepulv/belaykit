@@ -121,6 +121,8 @@ export function dropUnknownTopics(ws, index) {
 }
 
 export const flagAmbiguity = (ws, index) => flag(ws, index, `ambiguous: ${ws.snippets[index].classification.ambiguity}`);
+// The rulebook version writes the wording itself, a templated param filled from the snippet.
+export const flagSnippet = (ws, index, reason) => flag(ws, index, reason);
 
 export function flagNewThemes(ws, index) {
   for (const theme of newThemes(ws, index)) flag(ws, index, `new theme: ${theme}`);

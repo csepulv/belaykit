@@ -12,6 +12,7 @@ version: 1
 sections:
   - name: scan
     when: "true"
+    exhaustive: false
     rules:
       - when: '${when}'
         then: { action: flag }

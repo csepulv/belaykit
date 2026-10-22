@@ -92,11 +92,11 @@ async function iterate(workingSet, { choiceProvider, finishChecker, tracer, maxI
       selected = await runIteration(choiceProvider, workingSet, record);
     } catch (error) {
       record.entry.failed = true;
-      record.entry.durationMs = elapsedSince(started);
+      record.durationMs = elapsedSince(started);
       await keepFailedIteration(record, tracer, trace);
       throw error;
     }
-    record.entry.durationMs = elapsedSince(started);
+    record.durationMs = elapsedSince(started);
     await keepIteration(record, tracer, trace);
     if (selected.length === 0) return { status: 'no_match' };
   }
@@ -106,11 +106,13 @@ async function iterate(workingSet, { choiceProvider, finishChecker, tracer, maxI
 
 const elapsedSince = (started) => Math.round(performance.now() - started);
 
-// The tracer sees the default entry and every criterion result of the iteration, `data`
-// included, and returns what to keep, or null to keep nothing. `tracer: false` keeps nothing.
-async function keepIteration({ entry, matches }, tracer, trace) {
+// The tracer sees the default entry and, beside it, every criterion result of the iteration
+// (`data` included) and its duration, and returns what to keep, or null to keep nothing.
+// The entry holds only what the run decided, so the default trace is the same on every run;
+// what is measured stays beside it. `tracer: false` keeps nothing.
+async function keepIteration({ entry, matches, durationMs }, tracer, trace) {
   if (tracer === false) return;
-  const kept = await withContext('tracer', () => tracer(entry, { matches }));
+  const kept = await withContext('tracer', () => tracer(entry, { matches, durationMs }));
   if (kept !== null && kept !== undefined) trace.push(kept);
 }
 
@@ -125,7 +127,7 @@ async function keepFailedIteration(record, tracer, trace) {
 }
 
 const startEntry = (iteration) => ({
-  iteration, set: `set ${iteration}`, fired: [], durationMs: 0, evaluated: [], unevaluated: [], executed: [],
+  iteration, set: `set ${iteration}`, fired: [], evaluated: [], unevaluated: [], executed: [],
 });
 
 async function runIteration(choiceProvider, workingSet, record) {

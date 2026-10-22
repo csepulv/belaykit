@@ -39,6 +39,24 @@ describe('zod output as shapes and params', () => {
     expect(Rulebook.check(rulebook('true', '{ action: mark, color: green }'), registry)).toEqual(['section "draw" rule 1: param "color" must be one of red, blue']);
   });
 
+  test('a string compared with z.enum, a nullable z.enum or z.literal must be one of its values', () => {
+    const ticket = z.object({
+      status: z.enum(['open', 'closed']),
+      level: z.enum(['low', 'high']).nullable(),
+      kind: z.literal('memo'),
+      stage: z.enum(['draft', 'final']).and(z.string().min(1)),   // an allOf: still only its enum's values
+    });
+    const withTicket = { ...registry, initialKeys: [...registry.initialKeys, 'ticket'], shapes: { ...registry.shapes, ticket: z.toJSONSchema(ticket) } };
+
+    expect(Rulebook.check(rulebook('ws.ticket.status == "open" && ws.ticket.level in ["low", "high"] && ws.ticket.kind == "memo" && ws.ticket.stage == "final"'), withTicket)).toEqual([]);
+    expect(Rulebook.check(rulebook('ws.ticket.status == "opne" || ws.ticket.level == "hgih" || ws.ticket.kind != "note" || ws.ticket.stage == "fnal"'), withTicket)).toEqual([
+      'section "draw" when: ws.ticket.status is compared with "opne", which its shape doesn\'t allow (open, closed)',
+      'section "draw" when: ws.ticket.level is compared with "hgih", which its shape doesn\'t allow (low, high)',
+      'section "draw" when: ws.ticket.kind is compared with "note", which its shape doesn\'t allow (memo)',
+      'section "draw" when: ws.ticket.stage is compared with "fnal", which its shape doesn\'t allow (draft, final)',
+    ]);
+  });
+
   test('checking writes nothing to the console', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});

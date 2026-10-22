@@ -15,6 +15,7 @@ sections:
     when: "true"
     needs:
       classification: classify_item
+    exhaustive: false
     rules:
       - when: '${when}'
         then: { action: flag }

@@ -2,24 +2,31 @@
 // before anything runs: schema, badly named or unregistrable functions,
 // unregistered producers and actions, CEL that fails to compile, predicates of a
 // known non-boolean type, rules sharing an explicit id, ws fields nothing declares
-// (read from the syntax tree, including keys passed to helpers), and `matches`
-// patterns that aren't safe literals.
+// (read from the syntax tree, including keys passed to helpers), `matches`
+// patterns that aren't safe literals, any use of the name reserved for
+// BelayKit's own helpers (`belaykit`, helpers.js), and a helper's path that isn't a
+// literal or names a field nothing declares.
 import { readFileSync } from 'node:fs';
 import Ajv from 'ajv';
 import { Environment } from '@marcbachmann/cel-js';
 import isSafeRegex from 'safe-regex2';
 import { YAMLError, parse as parseYaml } from 'yaml';
-import { compileParamsCheckers, paramsProblems } from './params.js';
+import { EMPTY_SEGMENT, HELPER_NAMES, NAMESPACE, NAMESPACE_TYPE, helperPathCallOf, pathProblem, registerHelpers } from './helpers.js';
+import { compileParamsCheckers, compileTemplatedParams, paramsProblems } from './params.js';
 import { bindingFor, compileShapes, shapeErrors } from './shapes.js';
+import { hasPlaceholderSyntax, parseTemplate } from './templates.js';
 
 const schema = JSON.parse(readFileSync(new URL('./schema.json', import.meta.url), 'utf-8'));
 const validateSchema = new Ajv({ allErrors: true }).compile(schema);
 
-// The one field the plugin itself maintains on every working set. Anything else, a
-// terminal field included, is the agent's to declare.
-const HARNESS_FIELDS = ['gathered'];
+// The plugin maintains no field of its own: every key, a terminal field included, is the
+// agent's to declare. A field it once maintained is named with what replaced it.
+const RETIRED_FIELDS = { gathered: 'gone in 0.2: test has(ws.<key>) for a gathered key' };
 const PREDICATE = { name: 'bool', accepts: (type) => type === 'bool' || type === 'dyn' };
 const LIST = { name: 'list', accepts: (type) => type === 'dyn' || type.startsWith('list') };
+// A placeholder becomes text: a known type must be one that renders as text (provider.js).
+// cel-js's uint is an object (`UnsignedInt`), not a number, so it isn't text.
+const TEXT = { name: 'text (a string, number or boolean)', accepts: (type) => ['string', 'int', 'double', 'bool', 'dyn'].includes(type) };
 // cel-js accepts these as variable names, but `true` then reads as the literal and `in`
 // can't be parsed, so a binding may not use them (CEL's reserved words).
 const CEL_RESERVED_WORDS = new Set([
@@ -29,8 +36,11 @@ const CEL_RESERVED_WORDS = new Set([
 const FUNCTION_NAME = /^[a-z][a-zA-Z0-9_]*$/;
 const NAME = /^[a-z][a-z0-9_]*$/;
 const REGISTRY_KEYS = ['producers', 'actions', 'functions', 'version', 'initialKeys', 'shapes'];
+const PRODUCER_KEYS = ['writes', 'run'];
+const ACTION_KEYS = ['writes', 'params', 'templates', 'guard', 'run'];
 // cel-js expands these itself, so they aren't among its function definitions.
 const CEL_MACROS = ['has', 'all', 'exists', 'exists_one', 'map', 'filter'];
+const RESERVED = 'is reserved for BelayKit\'s helpers';
 
 export function loadRulebook(path, registry) {
   return loadRulebookText(readFileSync(path, 'utf-8'), registry);
@@ -77,10 +87,19 @@ export function loadRulebookText(text, registry) {
 
   const { env, errors: functionErrors } = makeEnvironment(registry);
   const { checkers: paramsCheckers, errors: paramsSchemaErrors } = compileParamsCheckers(registry.actions);
-  const knownFunctions = new Set([...CEL_MACROS, ...env.getDefinitions().functions.map(({ name }) => name)]);
+  const { templated, withProblems: templatesWithProblems, errors: templatesErrors } = compileTemplatedParams(registry.actions);
+  // A rule's braces aren't reported again for an action whose entry already has a problem that explains
+  // them: a bad `templates`, no `params` (which the params check reports), or an unknown key that lists the
+  // param (a misspelled `templates`). Any other key problem explains nothing about the braces.
+  const isBraceCheckable = (action, param) => !templatesWithProblems.has(action) && registry.actions[action].params !== undefined
+    && !unknownKeyLists(registry.actions[action], param);
+  // The helpers are known only as `belaykit.<name>` (unknownFunctionsIn), so `present(…)` alone is unknown.
+  const knownFunctions = new Set([
+    ...CEL_MACROS,
+    ...env.getDefinitions().functions.filter(({ receiverType }) => receiverType !== NAMESPACE_TYPE).map(({ name }) => name),
+  ]);
   const declaredKeys = [...new Set(document.sections.flatMap((section) => Object.keys(section.needs ?? {})))];
   const knownFields = new Set([
-    ...HARNESS_FIELDS,
     ...declaredKeys,
     ...(registry.initialKeys ?? []),
     ...Object.values(registry.actions).flatMap((action) => action.writes ?? []),
@@ -93,7 +112,8 @@ export function loadRulebookText(text, registry) {
     .filter((definition) => definition.keyArgs)
     .map((definition) => [nameInSignature(definition.signature), definition.keyArgs]));
 
-  const errors = [...registryKeyErrors(registry), ...functionErrors, ...paramsSchemaErrors, ...shapesErrors];
+  const actionGuards = readGuards(registry.actions);
+  const errors = [...registryKeyErrors(registry), ...guardTypeErrors(actionGuards), ...functionErrors, ...paramsSchemaErrors, ...templatesErrors, ...shapesErrors];
   // A `when` must be a boolean, and a `selectFirst` expression a list. `dyn` is accepted
   // here and checked when evaluated (provider.js). A rule that selects compiles its `when`
   // in its own environment, which adds the binding.
@@ -102,17 +122,25 @@ export function loadRulebookText(text, registry) {
     if (!result.valid) {
       const unknown = unknownFunctionsIn(environment, expression, knownFunctions);
       const messages = unknown.length ? unknown.map((name) => `unknown function "${name}"`) : [result.error?.message?.split('\n')[0] ?? 'does not compile'];
-      errors.push(...messages.map((message) => `${owner}: ${message}`));
+      const ownErrors = syntaxTreeErrorsIn(environment, expression, [reservedVariableErrors, helperPathErrors]);
+      errors.push(...[...ownErrors, ...messages].map((message) => `${owner}: ${message}`));
       return expression;
     }
     if (!expected.accepts(result.type)) errors.push(`${owner}: has type ${result.type}, expected ${expected.name}`);
     const { ast } = environment.parse(expression);
     const nodes = [...nodesOf(ast)];
     const references = [...nodes.map(wsPathOf), ...nodes.map((node) => helperKeyPathOf(node, keyArgsByName))].filter(Boolean);
+    // A key or field problem names what it is about, so the same one twice is one mistake. The syntax-tree checks
+    // after it don't say which call they mean, so each call keeps its own problem: two calls, two fixes.
     const expressionErrors = [
-      ...references.flatMap((path) => unknownKeyErrors(path, knownFields)),
-      ...shapeErrors(ast, { shapes, bindings, keyArgsByName }),
+      ...distinct([
+        ...references.flatMap((path) => unknownKeyErrors(path, knownFields)),
+        ...nodes.flatMap((node) => helperPathKeyErrors(node, knownFields)),
+        ...shapeErrors(ast, { shapes, bindings, keyArgsByName }),
+      ]),
       ...nodes.flatMap(patternErrors),
+      ...nodes.flatMap(reservedVariableErrors),
+      ...nodes.flatMap(helperPathErrors),
     ];
     errors.push(...expressionErrors.map((error) => `${owner}: ${error}`));
     return expression;
@@ -136,6 +164,13 @@ export function loadRulebookText(text, registry) {
       }
       const selectFirst = rule.selectFirst ? compileSelection(ruleLabel, rule.selectFirst, { env, registry, compile, errors }) : null;
       const bindings = selectFirst ? new Map([[selectFirst.name, selectionBinding(selectFirst, shapes)]]) : undefined;
+      if (Object.hasOwn(registry.actions, action)) {
+        const templatedParams = templated.get(action) ?? new Set();
+        errors.push(...templateErrors(ruleLabel, action, params, templatedParams, {
+          checkBraces: (param) => isBraceCheckable(action, param),
+          compilePlaceholder: (owner, expression) => compile(owner, expression, { environment: selectFirst?.env ?? env, expected: TEXT, bindings }),
+        }));
+      }
       return {
         id: rule.id ?? `${section.name}#${index + 1}`,
         selectFirst,
@@ -146,17 +181,60 @@ export function loadRulebookText(text, registry) {
       };
     });
     errors.push(...sharedIdErrors(label, section.rules ?? []));
+    const hitPolicy = section.hitPolicy ?? document.hitPolicyDefault ?? 'FIRST';
+    errors.push(...catchAllErrors(label, section, hitPolicy, { env, actionGuards }));
     return {
       name: section.name,
       when: compile(`${label} when`, section.when),
       needs: section.needs ?? {},
-      hitPolicy: section.hitPolicy ?? document.hitPolicyDefault ?? 'FIRST',
+      hitPolicy,
       rules,
     };
   });
 
+  const guards = guardsOf(sections, actionGuards);
+  for (const [action, guard] of guards) compile(`action "${action}" guard`, guard);
+
+  const outputs = document.outputs ?? null;
+  errors.push(...outputErrors(outputs ?? [], registry, declaredKeys));
+
   if (errors.length) throw new RulebookError(errors);
-  return { sections, declaredKeys, env };
+  return { sections, declaredKeys, env, templated, guards, outputs };
+}
+
+// Each action's guard (since 0.2), read once, through a class's getter too: the type check, the
+// catch-all and the run all use this reading, so the guard checked is the guard run.
+const readGuards = (actions) => new Map(Object.entries(actions)
+  .map(([name, action]) => [name, action.guard])
+  .filter(([, guard]) => guard !== undefined));
+
+// The guards of the actions a rule names, kept for the run. Each is checked once, like a `when`, and only
+// for the actions this rulebook names: what `ws` holds depends on the rulebook. A guard that isn't a
+// string is a registry problem (guardTypeErrors), and isn't compiled.
+function guardsOf(sections, actionGuards) {
+  const named = new Set(sections.flatMap((section) => section.rules.map((rule) => rule.action)));
+  return new Map([...named].filter((action) => typeof actionGuards.get(action) === 'string').map((action) => [action, actionGuards.get(action)]));
+}
+
+// A guard is one CEL expression; anything else would be ignored, and the action left unguarded.
+const guardTypeErrors = (actionGuards) => [...actionGuards]
+  .filter(([, guard]) => typeof guard !== 'string')
+  .map(([name]) => `action "${name}": guard must be a CEL expression (a string)`);
+
+// A mistake an expression makes twice (the same unknown key read twice, say) is one problem for its author.
+const distinct = (problems) => [...new Set(problems)];
+
+// What `rules.decide` returns (since 0.2): each output must be written by some action, and
+// none may be set by gathering (a needs key, or a producer's writes) before any rule decided it.
+function outputErrors(outputs, registry, declaredKeys) {
+  const written = new Set(Object.values(registry.actions).flatMap((action) => action.writes ?? []));
+  const producerOf = (output) => Object.entries(registry.producers).find(([, producer]) => (producer.writes ?? []).includes(output))?.[0];
+  return outputs.flatMap((output) => {
+    if (declaredKeys.includes(output)) return [`output "${output}" is a needs key; its producer would set it`];
+    const producer = producerOf(output);
+    if (producer !== undefined) return [`output "${output}" is written by producer "${producer}", which would set it before any rule decides`];
+    return written.has(output) ? [] : [`output "${output}": no action writes it`];
+  });
 }
 
 // `selectFirst: { <name>: <list expression> }`. The expression is checked like any other
@@ -170,7 +248,9 @@ function compileSelection(ruleLabel, selectFirst, { env, registry, compile, erro
   const problem = bindingProblem(name, registry);
   if (problem) {
     errors.push(`${owner}: binding "${name}" ${problem}`);
-    return { name, expression, env };
+    // The rule's `when` still uses the name as its binding; in the rulebook's environment it would read as the
+    // helpers' constant and add a misleading type problem. So it compiles where the name is the binding.
+    return { name, expression, env: name === NAMESPACE ? environmentBinding(name, registry) : env };
   }
   try {
     return { name, expression, env: env.clone().registerVariable(name, 'dyn') };
@@ -180,6 +260,29 @@ function compileSelection(ruleLabel, selectFirst, { env, registry, compile, erro
     return { name, expression, env };
   }
 }
+
+// A rule's params against its action's templates: each templated param's placeholders are compiled in
+// the rule's environment, like its `when` (`compilePlaceholder` reports their problems itself); a brace
+// anywhere in a param the action doesn't template is refused, so a placeholder never reaches an action as text.
+function templateErrors(ruleLabel, action, params, templatedParams, { checkBraces, compilePlaceholder }) {
+  return Object.entries(params).flatMap(([param, value]) => {
+    if (!templatedParams.has(param)) {
+      return checkBraces(param) && containsBrace(value) ? [`${ruleLabel}: param "${param}" has a brace, but "${action}" doesn't template "${param}"`] : [];
+    }
+    if (typeof value !== 'string') return []; // the params schema says it must be a string
+    const { parts, problem } = parseTemplate(value);
+    // The same placeholder written twice is one mistake, so it is compiled (and reported) once.
+    const placeholders = new Map(parts.filter((part) => 'expression' in part).map(({ expression, source }) => [source, expression]));
+    for (const [source, expression] of placeholders) {
+      compilePlaceholder(`${ruleLabel} param "${param}" placeholder ${source}`, expression);
+    }
+    return problem ? [`${ruleLabel} param "${param}": ${problem}`] : [];
+  });
+}
+
+const containsBrace = (value) => (value !== null && typeof value === 'object'
+  ? Object.values(value).some(containsBrace)
+  : hasPlaceholderSyntax(value));
 
 // What the binding stands for, for the shape check: an item of the list its expression reads.
 // An expression that doesn't parse was reported already, and leaves the binding unchecked.
@@ -192,17 +295,66 @@ function selectionBinding({ name, expression, env }, shapes) {
 }
 
 // A key the plugin doesn't read would otherwise be ignored without a word (a leftover
-// `fields`, from before shapes, most of all).
+// `fields`, from before shapes, most of all), in the registry and on each producer and action
+// (a misspelled `template` would leave a param untemplated).
 function registryKeyErrors(registry) {
-  return Object.keys(registry).filter((key) => !REGISTRY_KEYS.includes(key))
-    .map((key) => `registry: unknown key "${key}" (keys: ${REGISTRY_KEYS.join(', ')})`);
+  return [
+    ...unknownKeys('registry', registry, REGISTRY_KEYS),
+    ...Object.entries(registry.producers).flatMap(([name, producer]) => unknownKeys(`producer "${name}"`, producer, PRODUCER_KEYS, ENTRY_HINT)),
+    ...Object.entries(registry.actions).flatMap(([name, action]) => unknownKeys(`action "${name}"`, action, ACTION_KEYS, ENTRY_HINT)),
+  ];
 }
+
+// An entry made from a class holds only these keys too: what it needs comes through `deps`.
+const ENTRY_HINT = '; pass dependencies through deps';
+
+// Whether an action's unknown key holds a list naming `param`, as a misspelled `templates` would.
+const unknownKeyLists = (action, param) => Object.keys(action)
+  .filter((key) => !ACTION_KEYS.includes(key))
+  .some((key) => Array.isArray(action[key]) && action[key].includes(param));
+
+const unknownKeys = (label, object, known, hint = '') => Object.keys(object).filter((key) => !known.includes(key))
+  .map((key) => `${label}: unknown key "${key}" (keys: ${known.join(', ')}${hint})`);
 
 function bindingProblem(name, registry) {
   if (name === 'ws') return 'would hide the working set';
+  if (name === NAMESPACE) return RESERVED;
   if (CEL_RESERVED_WORDS.has(name)) return 'is a CEL reserved word';
   const functionNames = (registry.functions ?? []).map(({ signature }) => nameInSignature(signature));
   return functionNames.includes(name) ? 'is a registered function\'s name' : null;
+}
+
+// A FIRST section with rules says what happens when none holds: its last rule always holds (the literal
+// `true`, read from the syntax tree, without selectFirst, which can fail on an empty list), or it says
+// `exhaustive: false`, that no match is meant to end the run (since 0.2). Otherwise a claiming
+// section that matches nothing would end the run where its author may have expected a fallback. A guard
+// on the last rule's action can make it fail too (since 0.2), so that rule isn't a catch-all.
+function catchAllErrors(label, section, hitPolicy, { env, actionGuards }) {
+  const rules = section.rules ?? [];
+  const isFirstWithRules = hitPolicy === 'FIRST' && rules.length > 0;
+  if (Object.hasOwn(section, 'exhaustive')) {
+    return isFirstWithRules ? [] : [`${label}: exhaustive applies to a FIRST section with rules`];
+  }
+  if (!isFirstWithRules) return [];
+  const last = rules.at(-1);
+  // A last rule whose when doesn't compile is reported for that; the author may well have meant `true`.
+  if (!last.selectFirst && !env.check(last.when).valid) return [];
+  if (last.selectFirst || !isLiteralTrue(last.when, env)) {
+    return [`${label}: a FIRST section must end in a rule with when: "true" (without selectFirst), or say exhaustive: false`];
+  }
+  // A guard that isn't a string is still one the author meant (and is reported itself).
+  const { action } = last.then;
+  return !actionGuards.has(action) ? []
+    : [`${label}: its last rule's action "${action}" has a guard, so the rule may not hold; end in a rule with when: "true" whose action has no guard, or say exhaustive: false`];
+}
+
+function isLiteralTrue(expression, env) {
+  try {
+    const { ast } = env.parse(expression);
+    return ast.op === 'value' && ast.args === true;
+  } catch {
+    return false; // the rule's own check reports why it doesn't compile
+  }
 }
 
 // A rule's id names its choice in the trace, so explicit ids must be unique in a section.
@@ -228,8 +380,55 @@ function unknownFunctionsIn(environment, expression, knownFunctions) {
   } catch {
     return []; // a syntax error: the check's own message says where
   }
-  const called = [...nodesOf(ast)].filter((node) => node.op === 'call' || node.op === 'rcall').map((node) => node.args[0]);
-  return [...new Set(called.filter((name) => !knownFunctions.has(name)))];
+  const unknown = [...nodesOf(ast)].filter((node) => node.op === 'call' || node.op === 'rcall').flatMap((node) => {
+    const name = node.args[0];
+    if (isHelperCall(node)) return HELPER_NAMES.has(name) ? [] : [`${NAMESPACE}.${name}`];
+    return knownFunctions.has(name) ? [] : [name];
+  });
+  return [...new Set(unknown)];
+}
+
+const isHelperCall = (node) => node.op === 'rcall' && node.args[1]?.op === 'id' && node.args[1].args === NAMESPACE;
+
+// A macro's variable named like the helpers' namespace would hide them inside its body. Besides the list
+// macros, cel-js has `cel.bind(var, value, expr)`, a method of its own `cel` namespace.
+function reservedVariableErrors(node) {
+  if (node.op !== 'rcall' || !(CEL_MACROS.includes(node.args[0]) || isCelBind(node))) return [];
+  const variable = node.args[2]?.[0];
+  return variable?.op === 'id' && variable.args === NAMESPACE ? [`macro variable "${NAMESPACE}" ${RESERVED}`] : [];
+}
+
+const isCelBind = (node) => node.args[0] === 'bind' && node.args[1]?.op === 'id' && node.args[1].args === 'cel';
+
+// A helper's path is checked at load like the field access it stands for (shapes.js), so it must be a
+// string literal, as a `matches` pattern must.
+function helperPathErrors(node) {
+  const call = helperPathCallOf(node);
+  if (!call) return [];
+  const path = literalStringOf(call.path);
+  if (path === null) return [`${NAMESPACE}.${call.name}: path must be a string literal`];
+  return path.split('.').includes('') ? [pathProblem(call.name, path, EMPTY_SEGMENT)] : [];
+}
+
+// belaykit.present(ws, "fact.recurrence") reads ws.fact, so a path's first key must be a known one when
+// the container is ws itself. (A container such as ws.facts is its own node, checked as a reference.)
+function helperPathKeyErrors(node, knownFields) {
+  const call = helperPathCallOf(node);
+  const path = call && literalStringOf(call.path);
+  if (!path || call.container.op !== 'id' || call.container.args !== 'ws') return [];
+  const [key] = path.split('.');
+  return key === '' ? [] : unknownKeyErrors([key], knownFields).map((error) => pathProblem(call.name, path, error));
+}
+
+// For an expression that fails cel-js's check, the problems read from its syntax tree: the reserved name or
+// a helper's path may be the cause, so they're reported too.
+function syntaxTreeErrorsIn(environment, expression, checks) {
+  try {
+    const nodes = [...nodesOf(environment.parse(expression).ast)];
+    return checks.flatMap((check) => nodes.flatMap(check));
+  } catch {
+    return []; // a syntax error: the check's own message says where
+  }
 }
 
 // Every node of a parsed CEL expression, depth first.
@@ -292,16 +491,23 @@ const literalStringOf = (node) => (node.op === 'value' && typeof node.args === '
 // rulebook reads. Fields below a key are the shapes' to check (shapes.js).
 function unknownKeyErrors([key, ...fields], knownFields) {
   if (key === undefined || fields.length > 0) return [];
-  return knownFields.has(key) ? [] : [`unknown ws field "${key}"`];
+  if (knownFields.has(key)) return [];
+  return [`unknown ws field "${key}"${Object.hasOwn(RETIRED_FIELDS, key) ? ` (${RETIRED_FIELDS[key]})` : ''}`];
 }
 
-// Registers the registry's functions, returning registry errors (reported once, not per
-// rule) beside the environment. A function with a bad name isn't registered.
-export function makeEnvironment(registry) {
+// Registers BelayKit's helpers, then the registry's functions, returning registry errors
+// (reported once, not per rule) beside the environment. A function with a bad name isn't
+// registered.
+export function makeEnvironment(registry, { withHelpers = true } = {}) {
   const env = new Environment().registerVariable('ws', 'map');
+  if (withHelpers) registerHelpers(env);
   const errors = (registry.functions ?? []).flatMap((definition) => registerFunction(env, definition));
   return { env, errors };
 }
+
+// An environment, without the helpers, where `name` is a binding: for a rule whose binding took the helpers' name
+// (already refused), so its `when` is checked for its own problems only.
+const environmentBinding = (name, registry) => makeEnvironment(registry, { withHelpers: false }).env.registerVariable(name, 'dyn');
 
 // 'app_state(map, string): string' -> 'app_state'; a method keeps its receiver ('string.app_x').
 export const nameInSignature = (signature) => signature.slice(0, signature.indexOf('(')).trim();
@@ -309,6 +515,9 @@ export const nameInSignature = (signature) => signature.slice(0, signature.index
 function registerFunction(env, { keyArgs, ...definition }) {
   const head = nameInSignature(definition.signature);
   const name = head.slice(head.lastIndexOf('.') + 1);
+  if (head === NAMESPACE) return [`function "${head}": the name ${RESERVED}`];
+  // The helpers' type would otherwise take a registry's methods, so a registry could change the namespace.
+  if (head.startsWith(`${NAMESPACE_TYPE}.`)) return [`function "${head}": ${NAMESPACE_TYPE} is the type of BelayKit's helpers; a registry can't add to it`];
   if (!FUNCTION_NAME.test(name)) return [`function "${head}": names must match ${FUNCTION_NAME.source} (lower snake case or camelCase)`];
   if (keyArgs && name !== head) return [`function "${head}": keyArgs applies to global functions, not methods`];
   try {
@@ -318,6 +527,10 @@ function registerFunction(env, { keyArgs, ...definition }) {
     // cel-js reads `app.matches` as a method on an unknown type `app`.
     if (head.includes('.') && /Unknown type/.test(error.message)) {
       return [`function "${head}": dots aren't allowed in names; use ${head.replaceAll('.', '_')}`];
+    }
+    // A method on `dyn` named like a helper would apply to the helpers' type too.
+    if (new RegExp(`overlaps with existing overload '${NAMESPACE_TYPE}\\.`).test(error.message)) {
+      return [`function "${head}": a method on ${head.slice(0, head.lastIndexOf('.'))} named "${name}" would also apply to ${NAMESPACE}.${name}; rename it`];
     }
     return [`function "${head}": ${error.message.split('\n')[0]}`];
   }

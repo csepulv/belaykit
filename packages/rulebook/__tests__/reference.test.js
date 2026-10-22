@@ -4,9 +4,25 @@ import { describe, expect, test } from 'vitest';
 import { describeFunctions } from '../reference.js';
 import { triageRegistry } from './fixtures/registry.js';
 
+// BelayKit's own helpers come first in every reference, whatever the registry holds.
+const HELPERS = `Functions named \`belaykit.*\` are BelayKit's own helpers, in every rulebook; the others are the registry's.
+
+## belaykit.present
+
+\`belaykit.present(dyn, dyn): bool\`
+
+True when every key on the path exists and the last value isn't null. A missing key, or a null on the way, is false; a step into a value that isn't a map, and an empty path or segment, are errors. \`has()\` is true for a key holding null.
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| container | dyn | A map to read from: ws, a selectFirst binding or a macro variable |
+| path | dyn | Keys joined by dots, such as "facts.recurrence": a string literal, checked at load like the fields it reads |`;
+
 const REFERENCE = `# Rulebook functions
 
 Registry version: 3
+
+${HELPERS}
 
 ## app_isBlank
 
@@ -46,7 +62,7 @@ describe('describeFunctions', () => {
   test('an overload of a CEL built-in lists only the registry\'s own signature', () => {
     const registry = { producers: {}, actions: {}, functions: [{ signature: 'size(map, string): int', handler: () => 0n }] };
 
-    expect(describeFunctions(registry)).toBe('# Rulebook functions\n\n## size\n\n`size(map<dyn, dyn>, string): int`\n\n'
+    expect(describeFunctions(registry)).toBe(`# Rulebook functions\n\n${HELPERS}\n\n## size\n\n\`size(map<dyn, dyn>, string): int\`\n\n`
       + '| Parameter | Type | Description |\n| --- | --- | --- |\n| arg0 | map<dyn, dyn> | |\n| arg1 | string | |\n');
   });
 
@@ -60,8 +76,8 @@ describe('describeFunctions', () => {
     expect(describeFunctions(registry)).toContain('| choice | string | a \\| b or c |');
   });
 
-  test('a registry with no functions says so', () => {
-    expect(describeFunctions({ producers: {}, actions: {} })).toBe('# Rulebook functions\n\nNo functions are registered.\n');
+  test('a registry with no functions lists the helpers, and says it has none of its own', () => {
+    expect(describeFunctions({ producers: {}, actions: {} })).toBe(`# Rulebook functions\n\n${HELPERS}\n\nThe registry has no functions of its own.\n`);
   });
 
   test('a registry whose functions fail to register throws, listing them', () => {

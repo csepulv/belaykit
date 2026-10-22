@@ -15,6 +15,7 @@ version: 1
 sections:
   - name: check
     when: "true"
+    exhaustive: false
     rules:
       - when: '${when}'
         then: { action: flag }
