@@ -6,6 +6,34 @@ at the same version. The layout follows [Keep a Changelog](https://keepachangelo
 [Upgrading](documentation/upgrading.md) says what to do for each change that can stop code written for an earlier
 version.
 
+## 0.3.0 - 2026-10-24
+
+Upgrade all three together: `@belaykit/rulebook` 0.3 takes `@belaykit/core` 0.3 as its peer, and `belaykit` 0.3
+depends on it. The core and `belaykit` change only their version.
+
+### Added
+
+- **Macros:** named CEL expressions in macro files (`version: 1`, `macros:` of `{ params, body, description }`,
+  their own `imports:`), which a rulebook names with `imports:` and calls by name in any `when`, `selectFirst` list or
+  placeholder. Each call is expanded when the rulebook loads, so every load check applies to the expansion; a body's
+  own problem is reported once on the macro, and one that comes through a call's arguments at the call.
+  See [Macros](documentation/rulebooks.md#macros).
+- **`{ baseDir }`** on `Rulebook.fromText` and `Rulebook.check`: where a rulebook given as text resolves its imports.
+- **`rulebook.describeFunctions()`**, and **`belaykit-rulebook reference <file>`**: the function reference with the
+  macros that rulebook can call.
+- **`Rulebook.checkMacros(text, registry, { baseDir })`**, and **`belaykit-rulebook check`** on macro files: every macro
+  in a file checked against a registry, whether or not a rulebook calls it, with the keys the registry names
+  (`initialKeys`, `writes`, `shapes`). A macro file given to `Rulebook.check`, or a rulebook given to
+  `Rulebook.checkMacros`, says which to use. See [Macros](documentation/rulebooks.md#macros).
+
+### Changed
+
+- `Rulebook.fromText` and `Rulebook.check` take a third argument, the options, and refuse (a `TypeError`) a value
+  that isn't an object or a key they don't know, where before a third argument was ignored.
+- CEL's own macros (`exists`, `cel.bind` and the others) are called CEL macros, since "macro" now also names a
+  rulebook macro: the problem `macro variable "belaykit" is reserved…` now reads `CEL macro variable "belaykit" is
+  reserved…`, and `belaykit.present`'s description in the function reference says "a CEL macro variable".
+
 ## 0.2.0 - 2026-10-22
 
 Upgrade all three together: `@belaykit/rulebook` 0.2 takes `@belaykit/core` 0.2 as its peer, and `belaykit` 0.2

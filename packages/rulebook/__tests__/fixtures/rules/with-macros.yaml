@@ -1,0 +1,11 @@
+version: 1
+imports: [./triage.macros.yaml]
+sections:
+  - name: triage
+    when: isPresent("item")
+    needs:
+      classification: classify_item
+    exhaustive: false
+    rules:
+      - when: hasText()
+        then: { action: flag }

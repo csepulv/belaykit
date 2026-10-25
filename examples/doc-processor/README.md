@@ -75,10 +75,11 @@ next:
 | A registry: producers, actions, CEL functions, initial keys | `src/registry.js` |
 | A guarded action: no rulebook edit can classify (call the model) before the code check accepts the segmentation | `src/registry.js`, `classify_snippet`'s `guard` |
 | A templated param: the ambiguity flag's wording lives in the rulebook, filled from the selected snippet | `flag_ambiguity`'s `templates`, and its rule in `rules/doc-processor.rules.yaml` |
+| A macro: "this snippet waits to be classified", written once and called by the classify section and its rule | `rules/snippets.macros.yaml`, imported by `rules/doc-processor.rules.yaml` |
 | `chain`: a rulebook handing the gap to code | `agent-rulebook.js` |
 | `rules.regather`: asking for a gathered key again | `agent-rulebook.js`, `makeCheckProvider` |
-| Checking a rulebook before it runs | `pnpm run check` (`belaykit-rulebook check`) |
-| A function reference from the registry | `pnpm -s run reference > rules/functions.md` (a test keeps it in step) |
+| Checking the rulebook and its macro file before they run | `pnpm run check` (`belaykit-rulebook check`) |
+| A function reference: the registry's functions and the rulebook's macros | `pnpm -s run reference > rules/functions.md` (a test keeps it in step) |
 | Fixture runs: a rulebook's decisions pinned in text | `fixtures/review-flags.yaml`, `__tests__/rulebook-checks.test.js` |
 
 ## Files

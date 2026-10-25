@@ -87,14 +87,14 @@ describe('belaykit.present on values an agent writes', () => {
   });
 });
 
-describe('belaykit.present on a binding and a macro variable', () => {
+describe('belaykit.present on a binding and a CEL macro variable', () => {
   const ws = { items: [{ meta: null }, { meta: { tag: 'x' } }] };
 
   test('a selectFirst binding is a container', async () => {
     expect(await holds('belaykit.present(item, "meta.tag")', ws, { selectFirst: '{ item: ws.items }' })).toBe(true);
   });
 
-  test('a macro variable is a container', async () => {
+  test('a CEL macro variable is a container', async () => {
     expect(await holds('ws.items.exists(i, belaykit.present(i, "meta.tag"))', ws)).toBe(true);
     expect(await holds('ws.items.all(i, belaykit.present(i, "meta.tag"))', ws)).toBe(false);
   });
@@ -111,20 +111,20 @@ describe('the name belaykit is reserved for the helpers', () => {
       .toEqual([`${place} selectFirst: binding "belaykit" is reserved for BelayKit's helpers`]);
   });
 
-  test('as a macro variable', () => {
+  test('as a CEL macro variable', () => {
     expect(problemsOf('ws.items.exists(belaykit, belaykit == 1)'))
-      .toEqual([`${place} when: macro variable "belaykit" is reserved for BelayKit's helpers`]);
+      .toEqual([`${place} when: CEL macro variable "belaykit" is reserved for BelayKit's helpers`]);
   });
 
   // cel-js has cel.bind(var, value, expr), a macro with a variable of its own.
   test('as the variable of cel.bind', () => {
     expect(problemsOf('cel.bind(belaykit, 1, belaykit == 1)'))
-      .toEqual([`${place} when: macro variable "belaykit" is reserved for BelayKit's helpers`]);
+      .toEqual([`${place} when: CEL macro variable "belaykit" is reserved for BelayKit's helpers`]);
   });
 
   // The reserved name is the cause, so it's reported even when the check fails for it.
-  test('as a macro variable, in a rule that also fails cel-js\'s check', () => {
-    expect(problemsOf('ws.items.exists(belaykit, belaykit.foo(1))')).toContain(`${place} when: macro variable "belaykit" is reserved for BelayKit's helpers`);
+  test('as a CEL macro variable, in a rule that also fails cel-js\'s check', () => {
+    expect(problemsOf('ws.items.exists(belaykit, belaykit.foo(1))')).toContain(`${place} when: CEL macro variable "belaykit" is reserved for BelayKit's helpers`);
   });
 
   // A method on dyn named like a helper would also apply to the helpers' type.
@@ -188,7 +188,7 @@ describe('belaykit.present\'s path is checked at load', () => {
 
   // A path problem never hides another call's problem, such as a wrong number of arguments.
   test.each([
-    ['a reserved macro variable', 'ws.items.exists(belaykit, true)', 'macro variable "belaykit" is reserved for BelayKit\'s helpers'],
+    ['a reserved CEL macro variable', 'ws.items.exists(belaykit, true)', 'CEL macro variable "belaykit" is reserved for BelayKit\'s helpers'],
     ['an empty path', 'belaykit.present(ws, "")', 'belaykit.present "": a path is keys joined by dots, such as "facts.recurrence"'],
     ['a number as the path', 'belaykit.present(ws, 1)', 'belaykit.present: path must be a string literal'],
   ])('%s beside a call with too few arguments: both are reported', (_label, first, problem) => {
@@ -205,7 +205,7 @@ describe('belaykit.present\'s path is checked at load', () => {
     ['from ws', 'belaykit.present(ws, "facts.recurence")', {}, 'belaykit.present "facts.recurence": unknown field "recurence" on ws.facts'],
     ['from ws.<key>', 'belaykit.present(ws.facts, "recurrence.anser")', {}, 'belaykit.present "recurrence.anser": unknown field "anser" on ws.facts.recurrence'],
     ['from a selectFirst binding', 'belaykit.present(item, "tg")', { selectFirst: '{ item: ws.items }' }, 'belaykit.present "tg": unknown field "tg" on item (an item of ws.items)'],
-    ['from a macro variable', 'ws.items.exists(i, belaykit.present(i, "tg"))', {}, 'belaykit.present "tg": unknown field "tg" on i (an item of ws.items)'],
+    ['from a CEL macro variable', 'ws.items.exists(i, belaykit.present(i, "tg"))', {}, 'belaykit.present "tg": unknown field "tg" on i (an item of ws.items)'],
     ['an unknown first key', 'belaykit.present(ws, "fact.recurrence")', {}, 'belaykit.present "fact.recurrence": unknown ws field "fact"'],
     ['a step through a string', 'belaykit.present(ws, "facts.label.x")', {}, 'belaykit.present "facts.label.x": unknown field "x" on ws.facts.label'],
     ['a step through a list', 'belaykit.present(ws, "items.tag")', {}, 'belaykit.present "items.tag": unknown field "tag" on ws.items (a list)'],

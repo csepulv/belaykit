@@ -18,6 +18,19 @@ export function describeFunctions(registry) {
   return `${[...header, ...describeHelpers(definitions), ...registered].join('\n\n')}\n`;
 }
 
+// The macros a rulebook can call (since 0.3), by name, each as it is called, with its file, description
+// and body as written; '' for a rulebook that imports none. A rulebook's reference is the registry's, then this.
+export function describeMacros(macros) {
+  if (macros.length === 0) return '';
+  const entries = [...macros].sort((first, second) => first.name.localeCompare(second.name)).map((macro) => [
+    `## ${macro.name}`,
+    `\`${macro.name}(${macro.params.join(', ')})\`, from \`${macro.file}\``,
+    ...(macro.description ? [macro.description] : []),
+    `\`\`\`cel\n${macro.body.trim()}\n\`\`\``,
+  ].join('\n\n'));
+  return `${['Macros, from the files this rulebook imports: each is expanded where it\'s called, so its body is checked there.', ...entries].join('\n\n')}\n`;
+}
+
 // Each helper as it is called, `belaykit.present(…)`, not as cel-js names its type.
 function describeHelpers(definitions) {
   const helpers = definitions.filter(({ receiverType }) => receiverType === NAMESPACE_TYPE).map((definition) => ({

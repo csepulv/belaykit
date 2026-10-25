@@ -38,6 +38,28 @@ describe('belaykit-rulebook check', () => {
     expect(stderr).toEqual(['missing.yaml: no such file']);
   });
 
+  test('a rulebook\'s imports resolve from its own folder, wherever the command runs', () => {
+    expect(run('check', 'rules/with-macros.yaml', 'rules/missing-import.yaml', '--registry', 'registry.js#triageRegistry')).toEqual({
+      status: 1,
+      stdout: ['rules/with-macros.yaml: ok'],
+      stderr: ['rules/missing-import.yaml: imports "./gone.macros.yaml": no such file'],
+    });
+  });
+
+  test('a macro file is checked as one: a macro nothing calls yet fails the check, the rulebooks pass', () => {
+    expect(run('check', 'rules/with-macros.yaml', 'rules/triage.macros.yaml', 'rules/stale.macros.yaml', '--registry', 'registry.js#triageRegistry')).toEqual({
+      status: 1,
+      stdout: ['rules/with-macros.yaml: ok', 'rules/triage.macros.yaml: ok'],
+      stderr: ['rules/stale.macros.yaml: macro "isStale": unknown ws field "itme" (a macro file knows the keys its registry names: initialKeys, writes and shapes)'],
+    });
+  });
+
+  test('a macro file whose imports lead back to it is a cycle, named from it', () => {
+    expect(run('check', 'rules/loop-a.macros.yaml', '--registry', 'registry.js#triageRegistry').stderr).toEqual([
+      'rules/loop-a.macros.yaml: imports form a cycle: loop-a.macros.yaml -> loop-b.macros.yaml -> loop-a.macros.yaml',
+    ]);
+  });
+
   test('a registry module without the named export exits 1, naming it', () => {
     expect(run('check', 'clean.yaml', '--registry', 'registry.js#organizeRegistry')).toEqual({
       status: 1,

@@ -1,0 +1,8 @@
+version: 1
+macros:
+  isPresent:
+    params: [key]
+    body: app_state(ws, key) == "present"
+  hasText:
+    body: '!app_isBlank(ws.item)'
+    description: the item has something besides whitespace

@@ -8,7 +8,8 @@ A **rulebook** writes an agent's decisions as text: a YAML file of **sections** 
 [CEL](https://cel.dev) (the Common Expression Language: small, side-effect-free expressions). It's checked when it
 loads against your agent's **registry**, the code it may name, and a loaded `Rulebook` gives you a choice provider for
 `@belaykit/core`. This page is the reference for the format and the package; [Getting started](getting-started.md)
-shows one in use. Coming from 0.1? [Upgrading](upgrading.md) lists what changed in 0.2 and what to do.
+shows one in use. Coming from an earlier version? [Upgrading](upgrading.md) lists what changed in each release and
+what to do.
 
 ```bash
 npm install @belaykit/core @belaykit/rulebook
@@ -39,6 +40,7 @@ sections:
 | Key | Where | Meaning |
 | --- | --- | --- |
 | `version` | top | Always `1`. |
+| `imports` | top | Optional. Macro files whose macros this rulebook calls, relative to it; one or more, no path twice. See [Macros](#macros). |
 | `hitPolicyDefault` | top | `FIRST` or `ALL`, for sections that don't set `hitPolicy`. Default `FIRST`. |
 | `outputs` | top | Optional. The working-set keys `rules.decide` returns. See [below](#deciding-with-a-rulebook). |
 | `sections` | top | The sections, in order. |
@@ -154,7 +156,7 @@ the key's **shape** in the registry, at any depth ([below](#shapes)). A field re
 (a key without a shape, an object the shape leaves open) is checked only when the rule runs: a missing one fails the
 run, never a silent `no_match`.
 
-**Functions.** A rulebook may call CEL's built-in functions and macros, as
+**Functions.** A rulebook may call CEL's built-in functions and CEL macros, as
 [cel-js](https://github.com/marcbachmann/cel-js#language-features) implements them: among others `size`, `has`,
 `exists`, `all`, `exists_one`, `map`, `filter`, `in`, and the string methods `contains`, `startsWith`, `endsWith`,
 `matches`, `lowerAscii`, `upperAscii`, `trim` and `split`. Not every CEL extension is there (`replace` isn't). A
@@ -177,7 +179,7 @@ reference.
 BelayKit adds a few functions of its own, for the oddities of CEL, under the name `belaykit`, in every rulebook.
 `belaykit.present(container, path)` says whether a value is there: it is true when every key on the dotted `path`
 exists and the last value isn't `null`, and false for a missing key or a `null` anywhere on the way. It reads the
-path itself, so a missing key never fails the run. The container is any map: `ws`, a `selectFirst` binding, a macro's
+path itself, so a missing key never fails the run. The container is any map: `ws`, a `selectFirst` binding, a CEL macro's
 variable, and the plain objects and JavaScript `Map`s your agent writes. Each segment is a plain key; list indexes
 aren't supported.
 
@@ -220,7 +222,7 @@ for (const facts of [{}, { recurrence: null }, { recurrence: { answer: 'yes' } }
 ```
 
 With `has(ws.facts.recurrence)` in place of `belaykit.present`, the second case would fail the run reading `answer`.
-The name `belaykit` is reserved: a `selectFirst` binding or a macro variable (`cel.bind`'s included) can't take it,
+The name `belaykit` is reserved: a `selectFirst` binding or a CEL macro's variable (a list macro's or `cel.bind`'s) can't take it,
 and a registry can't register a function under it, nor a method on `dyn` that would overlap a helper (its name and
 arguments), which would also apply to it. The function reference lists the helpers first
 ([Loading and checking](#loading-and-checking)).
@@ -230,12 +232,209 @@ pattern must be a string literal, must compile, and must pass
 [`safe-regex2`](https://www.npmjs.com/package/safe-regex2)'s check for exponential backtracking. That check is a
 heuristic: it passes `^(a|aa)+$`, which backtracks exponentially, so keep patterns simple and anchored.
 
+## Macros
+
+A condition a rulebook needs in several places can be written once, as a **macro**: a named CEL expression in a
+**macro file**, which the rulebook imports. When the rulebook loads, each call to a macro is replaced by its body,
+with each param replaced by the call's argument, so the body is checked where it's called, against what the call
+passes. Since 0.3.
+
+```yaml
+# common.macros.yaml
+version: 1
+macros:
+  isConfirmed:
+    params: [p]
+    body: p.transition.answer == "yes" && p.payload.answer == "yes"
+    description: the transition and the payload are both confirmed
+```
+
+| Key | Where | Meaning |
+| --- | --- | --- |
+| `version` | top | Always `1`. |
+| `imports` | top | Optional. Other macro files, relative to this one; a list of one or more, no path twice. |
+| `macros` | top | Each macro, by name: `^[a-z][a-zA-Z0-9_]*$`, so camelCase or snake case. |
+| `params` | macro | Optional. The names its body uses for the values a call passes, in order: `^[a-z][a-z0-9_]*$`, as a `selectFirst` binding's (so `item_value`, not `itemValue`). |
+| `body` | macro | The CEL expression a call stands for. |
+| `description` | macro | Optional. Shown in the function reference. |
+
+A rulebook names its macro files with `imports:` at the top, and calls a macro by name, with an argument for each
+param:
+
+```js run
+import { writeFileSync } from 'node:fs';
+import { Rulebook } from '@belaykit/rulebook';
+
+const answer = { type: 'object', properties: { answer: { enum: ['yes', 'no'] } }, additionalProperties: false };
+const registry = {
+  producers: {},
+  actions: {
+    settle: {
+      writes: ['routing'],
+      params: { type: 'object', properties: { routing: { type: 'string' } }, additionalProperties: false },
+      run: async (ws, { params }) => { ws.routing = params.routing; },
+    },
+  },
+  initialKeys: ['facts'],
+  shapes: { facts: { type: 'object', properties: { transition: answer, payload: answer }, additionalProperties: false } },
+};
+writeFileSync('common.macros.yaml', `
+version: 1
+macros:
+  isConfirmed:
+    params: [p]
+    body: p.transition.answer == "yes" && p.payload.answer == "yes"
+    description: the transition and the payload are both confirmed
+`);
+const rulebook = (when) => `
+version: 1
+imports: [./common.macros.yaml]
+outputs: [routing]
+sections:
+  - name: decide
+    when: '!has(ws.routing)'
+    rules:
+      - when: ${when}
+        then: { action: settle, routing: go }
+      - when: "true"
+        then: { action: settle, routing: hold }
+`;
+
+const rules = Rulebook.fromText(rulebook('isConfirmed(ws.facts)'), registry, { baseDir: '.' });
+for (const payload of ['yes', 'no']) {
+  const decision = await rules.decide({ facts: { transition: { answer: 'yes' }, payload: { answer: payload } } });
+  console.log(`payload ${payload}:`, decision.outputs.routing);
+}
+console.log(rules.sections[0].rules[0].when);
+```
+
+```text output
+payload yes: go
+payload no: hold
+isConfirmed(ws.facts)
+```
+
+- **Where imports resolve from.** A path in `imports:` is relative to the file that has it. `Rulebook.load` and the
+  `belaykit-rulebook` command use the rulebook's own folder; a rulebook given as text has none, so
+  `Rulebook.fromText` and `Rulebook.check` take it as `{ baseDir }` ([below](#loading-and-checking)). A relative
+  `baseDir` is resolved from the current directory (`process.cwd()`).
+- **Which macros a rulebook can call:** those of the files it imports itself. A macro's body can call the macros of
+  its own file and of the files that file imports. So every name a rulebook calls is in a file it names.
+- **Where a macro can be called:** anywhere a rulebook has CEL: a section's or a rule's `when`, a `selectFirst` list,
+  and a [templated param](#templated-params)'s placeholders. It can't be called in an action's
+  [guard](#guarded-actions), which is code in the registry.
+- **How it's called:** by name, with parentheses and an argument for each param: `isReady()` or `isConfirmed(ws.facts)`.
+  Not as a method (`x.isReady()` is refused), and not without parentheses (`isReady` alone reads as a variable, an
+  unknown one).
+- **What a body reads:** its params, `ws`, and the variables its own CEL macros bind (`exists(s, …)`, `cel.bind`). It can call
+  what a rulebook can (CEL's functions, BelayKit's helpers, the registry's functions, `cel.bind`) and the macros it
+  sees, and use CEL's type names (`type(x) == string`). Any other name is refused, so a body can't depend on a
+  `selectFirst` binding at the place it's called; pass the item as an argument instead. Every param must be used.
+- **Names.** A macro's name can't be one a rulebook's CEL already calls (`size`, `has`, a registered function,
+  `belaykit`, `cel`) or a CEL reserved word, and one name can't be defined in two imported files. Macros that call
+  each other in a circle, and files that import each other, are refused.
+- **What you see.** `rulebook.sections` shows each expression as written, the call and not its expansion. The
+  function reference lists the macros a rulebook can call ([below](#loading-and-checking)). But a problem found while
+  a rule runs (a key missing from the working set, say) is in the expanded text, which doesn't name the macro; only a
+  placeholder's shows the placeholder as written, call included.
+- **The catch-all.** A `FIRST` section's last rule may call a macro whose body is `true`: the expansion is what
+  [When no rule holds](#when-no-rule-holds) reads.
+
+**Where a problem is reported.** A problem a macro's body has on its own, whoever calls it, is reported once, on the
+macro (`macro "x" (<file>): …`). One that depends on what a call passes, such as a field read through a param, is
+reported at each call, naming the macro (`… when, in macro "x": …`). A macro nothing calls is still checked for its
+own name, params, the names it reads and the macros it calls, but its body isn't compiled against your registry's
+functions or your working set's keys and shapes, which only a call puts it beside. A mistake in the call itself, such
+as a missing argument, is the call's own:
+
+```js run
+import { writeFileSync } from 'node:fs';
+import { Rulebook } from '@belaykit/rulebook';
+
+const answer = { type: 'object', properties: { answer: { enum: ['yes', 'no'] } }, additionalProperties: false };
+const registry = {
+  producers: {},
+  actions: { settle: { writes: ['routing'], run: async () => {} } },
+  initialKeys: ['facts', 'routing'],
+  shapes: { facts: { type: 'object', properties: { transition: answer, payload: answer }, additionalProperties: false } },
+};
+writeFileSync('common.macros.yaml', `
+version: 1
+macros:
+  isConfirmed:
+    params: [p]
+    body: p.transition.answer == "yes" && p.paylod.answer == "yes"
+  isOpen:
+    body: ws.routng == null
+  isAnswered:
+    params: [p, value]
+    body: p.answer == value
+`);
+console.log(Rulebook.check(`
+version: 1
+imports: [./common.macros.yaml]
+sections:
+  - name: decide
+    when: isOpen()
+    exhaustive: false
+    rules:
+      - when: isConfirmed(ws.facts) && isAnswered(ws.facts.transition)
+        then: { action: settle }
+`, registry, { baseDir: '.' }).join('\n'));
+```
+
+```text output
+section "decide" rule 1 when: macro "isAnswered" takes 2 arguments (p, value), given 1
+section "decide" rule 1 when, in macro "isConfirmed": unknown field "paylod" on ws.facts
+macro "isOpen" (common.macros.yaml): unknown ws field "routng"
+```
+
+**Checking a macro file.** A macro file can be checked on its own, against a registry, before any rulebook calls its
+macros: `Rulebook.checkMacros(text, registry, { baseDir })`, or the `belaykit-rulebook check` command, which takes
+macro files beside rulebooks ([below](#loading-and-checking)). Every macro in the file is checked as a call would check
+it. A macro file has no `needs`, so it knows the keys the registry names: `initialKeys`, any `writes`, and the keys of
+`shapes`. A field read through a param is still checked only at a call, since the param can be anything:
+
+```js run
+import { Rulebook } from '@belaykit/rulebook';
+
+const answer = { type: 'object', properties: { answer: { enum: ['yes', 'no'] } }, additionalProperties: false };
+const registry = {
+  producers: {},
+  actions: {},
+  initialKeys: ['facts'],
+  shapes: { facts: { type: 'object', properties: { transition: answer, payload: answer }, additionalProperties: false } },
+};
+const macros = (stale) => `
+version: 1
+macros:
+  isConfirmed:
+    params: [p]
+    body: p.transition.answer == "yes" && p.paylod.answer == "yes"
+  isStale:
+    body: ${stale}.transition.answer == "no"
+`;
+console.log(Rulebook.checkMacros(macros('ws.factz'), registry).join('\n'));
+console.log(Rulebook.checkMacros(macros('ws.facts'), registry));
+```
+
+```text output
+macro "isStale": unknown ws field "factz" (a macro file knows the keys its registry names: initialKeys, writes and shapes)
+[]
+```
+
+`isConfirmed`'s `paylod` isn't reported here: `p` could be anything until a call passes `ws.facts`. The check of a
+shared file is against one registry, so a file two agents share is checked against each. A rulebook's own check
+compiles only the bodies of the macros it calls, so a body that reads what only the other agent has doesn't fail it.
+Names are checked for every macro in the file: a macro or param named like one of the importing agent's registered
+functions fails that agent's rulebooks, called or not.
+
 ## Shapes
 
 A registry's `shapes` give a working-set key a **shape**: a JSON Schema (draft 2020-12) for its value. If your agent
 already describes its data with zod, `z.toJSONSchema(schema)` is the shape, unchanged. The loader follows every field
 a rulebook reads through the shapes, at any depth: from `ws.<key>`, from a `selectFirst` binding over `ws.<key>` (an
-item of the list), and from a macro's variable (`exists`, `all`, `exists_one`, `map`, `filter`). A field no shape
+item of the list), and from a CEL list macro's variable (`exists`, `all`, `exists_one`, `map`, `filter`). A field no shape
 allows is a load error:
 
 ```js run
@@ -548,7 +747,9 @@ section "decide": its last rule's action "escalate" has a guard, so the rule may
 
 `Rulebook.load(path, registry)` and `Rulebook.fromText(text, registry)` check everything above and throw listing every
 problem, not just the first, each naming its section and rule (rules count from 1). `Rulebook.check(text, registry)`
-returns the same problems as a list (`[]` when the text is clean) and never throws for a problem in the text:
+returns the same problems as a list (`[]` when the text is clean) and never throws for a problem in the text. A
+rulebook with [macros](#macros) given as text needs a folder for its imports: `Rulebook.fromText(text, registry,
+{ baseDir })` and `Rulebook.check(text, registry, { baseDir })`.
 
 ```js run
 import { Rulebook } from '@belaykit/rulebook';
@@ -616,14 +817,17 @@ section "decide" rule 1: unknown key "selectFrist"
 registry: unknown key "fields" (keys: producers, actions, functions, version, initialKeys, shapes)
 ```
 
-The `belaykit-rulebook` command runs the same check on files before you deploy them, and prints what a rulebook may
+The `belaykit-rulebook` command runs the same check on files before you deploy them (on a macro file, a file with
+`macros:` and no `sections:`, it runs [`Rulebook.checkMacros`](#macros)), and prints what a rulebook may
 call as Markdown, BelayKit's helpers first and then the registry's functions, for a reference you commit beside your
-rulebooks. Installed in a project, it runs with `npx`
-or from a `package.json` script:
+rulebooks. Given a rulebook, the reference also lists the macros that rulebook can call, each with its call form,
+file, description and body; `rulebook.describeFunctions()` returns the same text. Installed in a project, it runs
+with `npx` or from a `package.json` script:
 
 ```bash
-npx belaykit-rulebook check rulebooks/*.rules.yaml --registry src/registry.js#registry   # exit 0 when every file is clean
+npx belaykit-rulebook check rulebooks/*.rules.yaml rulebooks/*.macros.yaml --registry src/registry.js#registry   # exit 0 when every file is clean
 npx belaykit-rulebook reference --registry src/registry.js#registry > rulebook-functions.md
+npx belaykit-rulebook reference rulebooks/triage.rules.yaml --registry src/registry.js#registry > triage-functions.md
 ```
 
 `--registry` names the module (resolved from the current directory) and the export that holds the registry. Name

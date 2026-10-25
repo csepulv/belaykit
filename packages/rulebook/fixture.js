@@ -6,7 +6,7 @@ import { inspect, isDeepStrictEqual } from 'node:util';
 import Ajv from 'ajv';
 import { Agent } from '@belaykit/core';
 import { YAMLError, parse as parseYaml } from 'yaml';
-import { schemaMessage } from './load.js';
+import { schemaMessage } from './schema-message.js';
 import { initialWorkingSet, rulebookProvider } from './provider.js';
 
 const validateFixture = new Ajv({ allErrors: true }).compile({

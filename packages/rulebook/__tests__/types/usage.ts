@@ -5,7 +5,7 @@ import { Agent, always, chain } from '@belaykit/core';
 import { describeFunctions, loadFixture, Rulebook, schemaVersions, version } from '@belaykit/rulebook';
 import type {
   ActionContext, Decision, Fixture, FixtureRun, JsonSchema, Producer, RegisteredAction, RegisteredFunction, Registry, Rule,
-  Section, SelectedItem, WorkingSet,
+  RulebookTextOptions, Section, SelectedItem, WorkingSet,
 } from '@belaykit/rulebook';
 
 interface Deps {
@@ -32,6 +32,17 @@ export const oldFields: Registry<Deps> = { producers: {}, actions: {}, fields: {
 
 const rulebook: Rulebook = Rulebook.fromText('version: 1\nsections: []\n', registry);
 export const fromFile: Rulebook = Rulebook.load('triage.rules.yaml', registry);
+const textOptions: RulebookTextOptions = { baseDir: 'rules' };
+export const withImports: Rulebook = Rulebook.fromText('version: 1\nimports: [./common.macros.yaml]\nsections: []\n', registry, textOptions);
+export const checkedWithImports: string[] = Rulebook.check('version: 1\nsections: []\n', registry, { baseDir: 'rules' });
+export const rulebookReference: string = withImports.describeFunctions();
+export const macroFileProblems: string[] = Rulebook.checkMacros('version: 1\nmacros: {}\n', registry, { baseDir: 'rules' });
+// @ts-expect-error a macro file is checked against a registry
+export const macroFileWithoutRegistry: string[] = Rulebook.checkMacros('version: 1\nmacros: {}\n');
+// @ts-expect-error baseDir is a folder's path, a string
+export const numericBaseDir: Rulebook = Rulebook.fromText('version: 1\nsections: []\n', registry, { baseDir: 3 });
+// @ts-expect-error the text entry points take baseDir only
+export const unknownTextOption: string[] = Rulebook.check('version: 1\nsections: []\n', registry, { basedir: 'rules' });
 
 export const sections: readonly Section[] = rulebook.sections;
 export const rules: Rule[] = rulebook.sections.flatMap((section) => section.rules);

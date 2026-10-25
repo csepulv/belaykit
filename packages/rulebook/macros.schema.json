@@ -1,0 +1,34 @@
+{
+  "$comment": "A BelayKit macro file: version, imports (other macro files, relative to this one) and macros, each a name mapped to its params, its body (a CEL expression) and a description. Rulebooks import macro files; a macro is called by name in a rulebook's CEL and expanded when the rulebook loads.",
+  "type": "object",
+  "required": ["version", "macros"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 1 },
+    "imports": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string" }
+    },
+    "macros": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "pattern": "^[a-z][a-zA-Z0-9_]*$" },
+      "additionalProperties": {
+        "type": "object",
+        "required": ["body"],
+        "additionalProperties": false,
+        "properties": {
+          "params": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" }
+          },
+          "body": { "type": "string" },
+          "description": { "type": "string" }
+        }
+      }
+    }
+  }
+}

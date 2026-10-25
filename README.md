@@ -52,8 +52,8 @@ completed [ 'urgent' ]
 - [Getting started](documentation/getting-started.md): a first agent in code and with a rulebook, then a complete example
   agent that extracts and files a document's snippets with a model.
 - [Concepts](documentation/concepts.md): the loop, choices, outcomes, the trace and the options.
-- [Rulebooks](documentation/rulebooks.md): the rulebook format, the registry, checks and fixtures, and a rulebook used
-  on its own as a decision function (`rules.decide`).
+- [Rulebooks](documentation/rulebooks.md): the rulebook format, macros, the registry, checks and fixtures, and a
+  rulebook used on its own as a decision function (`rules.decide`).
 - API reference: [`@belaykit/core`](documentation/api/core.md), [`@belaykit/rulebook`](documentation/api/rulebook.md).
 - [`examples/doc-processor`](examples/doc-processor): the example agent, written with and without a rulebook.
 - [Upgrading](documentation/upgrading.md) from an earlier version, and the [changelog](CHANGELOG.md).
@@ -67,7 +67,7 @@ completed [ 'urgent' ]
 
 ## Status
 
-0.2. The API may change before 1.0, but changes will be deliberate, and each is listed in the
+0.3. The API may change before 1.0, but changes will be deliberate, and each is listed in the
 [changelog](CHANGELOG.md), with what to do in [Upgrading](documentation/upgrading.md).
 
 ## License

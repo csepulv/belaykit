@@ -1,0 +1,9 @@
+version: 1
+imports: [./gone.macros.yaml]
+sections:
+  - name: triage
+    when: ws.item != null
+    exhaustive: false
+    rules:
+      - when: '!app_isBlank(ws.item)'
+        then: { action: flag }

@@ -6,7 +6,63 @@ title: Upgrading
 
 What changes when you move to a new version of BelayKit, and what to do about it: one section per version, newest
 first. [CHANGELOG.md](../CHANGELOG.md) lists every change; this page covers the ones that can stop an agent or a
-rulebook that worked before.
+rulebook that worked before. Each example runs on the current version, so a message a later release reworded shows
+its new wording, in the older sections too.
+
+## From 0.2 to 0.3
+
+Upgrade the packages together: `@belaykit/rulebook` 0.3 takes `@belaykit/core` 0.3 as its peer. A range written for
+0.2 (`^0.2.0`) doesn't reach 0.3, so name the new one:
+
+```bash
+npm install @belaykit/core@^0.3.0 @belaykit/rulebook@^0.3.0
+npm install belaykit@^0.3.0 @belaykit/rulebook@^0.3.0     # if you use the core as belaykit
+```
+
+A rulebook, a registry or an agent that worked with 0.2 works with 0.3 unchanged, unless it passes a third argument
+to `Rulebook.fromText` or `Rulebook.check`. Two texts changed wording, which matters only to a check that compares
+them:
+
+| Change | What you see | What to do |
+| --- | --- | --- |
+| `Rulebook.fromText` and `Rulebook.check` take options as a third argument | a `TypeError` for a value that isn't an object (`null` and `undefined` are fine), or a key other than `baseDir`, where a third argument was ignored | pass only `{ baseDir }`, or nothing |
+| "Macro" now also names a rulebook macro, so CEL's own are called CEL macros | the problem `macro variable "belaykit" is reserved…` reads `CEL macro variable "belaykit" is reserved…` | update a test that matches the old text |
+| The same wording in `belaykit.present`'s description | a function reference generated again differs in one line, its `container` row ("a CEL macro variable") | regenerate a committed reference |
+
+The first two, as 0.3 reports them:
+
+```js run
+import { Rulebook } from '@belaykit/rulebook';
+
+const registry = {
+  producers: {},
+  actions: { settle: { writes: ['routing'], run: async () => {} } },
+  initialKeys: ['items', 'routing'],
+};
+const rulebook = `
+version: 1
+sections:
+  - name: decide
+    when: ws.items.exists(belaykit, belaykit == "x")
+    exhaustive: false
+    rules:
+      - when: "true"
+        then: { action: settle }
+`;
+
+for (const options of ['.', { basedir: '.' }]) {
+  try { Rulebook.check(rulebook, registry, options); } catch (error) { console.log(`${error.name}: ${error.message}`); }
+}
+console.log(Rulebook.check(rulebook, registry).join('\n'));
+```
+
+```text output
+TypeError: Rulebook.check: options must be an object, such as { baseDir }
+TypeError: Rulebook.check: unknown option "basedir" (options: baseDir)
+section "decide" when: CEL macro variable "belaykit" is reserved for BelayKit's helpers
+```
+
+What's new is [macros](rulebooks.md#macros), and they apply only to a rulebook that imports a macro file.
 
 ## From 0.1 to 0.2
 
@@ -122,7 +178,7 @@ List `note` in the action's `templates` if the rulebook should fill it from the 
 braces.
 
 The name `belaykit` belongs to BelayKit's own CEL helpers ([BelayKit's helpers](rulebooks.md#belaykits-helpers)), so a
-`selectFirst` binding, a macro variable or a registered function can't take it, nor can a method on `dyn` that would
+`selectFirst` binding, a CEL macro's variable or a registered function can't take it, nor can a method on `dyn` that would
 overlap a helper:
 
 ```js run
@@ -155,7 +211,7 @@ sections:
 function "belaykit": the name is reserved for BelayKit's helpers
 function "dyn.present": a method on dyn named "present" would also apply to belaykit.present; rename it
 section "decide" rule 1 selectFirst: binding "belaykit" is reserved for BelayKit's helpers
-section "decide" when: macro variable "belaykit" is reserved for BelayKit's helpers
+section "decide" when: CEL macro variable "belaykit" is reserved for BelayKit's helpers
 ```
 
 ### Runs that now fail

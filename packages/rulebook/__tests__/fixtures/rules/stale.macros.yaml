@@ -1,0 +1,7 @@
+version: 1
+macros:
+  hasText:
+    body: "!app_isBlank(ws.item)"
+  isStale:
+    body: app_isBlank(ws.itme)
+    description: written before any rulebook calls it

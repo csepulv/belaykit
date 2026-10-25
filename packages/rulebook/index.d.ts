@@ -111,7 +111,7 @@ export interface Registry<Deps = unknown> {
   /**
    * A JSON Schema per ws key, describing its value. At load, every field a rulebook reads is
    * followed through them, at any depth: from `ws.<key>`, from a `selectFirst` binding over
-   * `ws.<key>` (its `items`), and from a macro's variable (`exists`, `all`, `exists_one`, `map`,
+   * `ws.<key>` (its `items`), and from a CEL list macro's variable (`exists`, `all`, `exists_one`, `map`,
    * `filter`). A field no shape allows is a load error, and so is a string literal compared
    * (`==`, `!=`, `in [...]`) with a field whose shape lists its values (`enum`, `const`) but not
    * that one. Checking stops at an open object
@@ -123,7 +123,10 @@ export interface Registry<Deps = unknown> {
   shapes?: Record<string, JsonSchema>;
 }
 
-/** A rule as loaded. Each becomes a choice at run time, named by its `id`. */
+/**
+ * A rule as loaded. Each becomes a choice at run time, named by its `id`. Its expressions are as
+ * written: a call to a macro shows the call, not its expansion.
+ */
 export interface Rule {
   /** The rule's own `id`, or `<section>#<n>` (n from 1). Explicit ids are unique within a section. */
   id: string;
@@ -136,7 +139,7 @@ export interface Rule {
   why: string | null;
 }
 
-/** A section as loaded: when it applies, what it gathers, how its rules are selected, and its rules. */
+/** A section as loaded: when it applies (as written), what it gathers, how its rules are selected, and its rules. */
 export interface Section {
   name: string;
   when: string;
@@ -183,6 +186,15 @@ export type Decision =
   | { status: 'completed'; outputs: Record<string, unknown>; trace: TraceEntry[] }
   | { status: 'no_match' | 'failed'; error: string; trace: TraceEntry[] };
 
+/** How a rulebook given as text is read (since 0.3). */
+export interface RulebookTextOptions {
+  /**
+   * The folder the rulebook's `imports` resolve from, as a file's own folder would be. Text with
+   * `imports` and no `baseDir` is a load problem.
+   */
+  baseDir?: string;
+}
+
 /** A rulebook loaded and checked against a registry, which it keeps (a copy of its producers and actions). */
 export class Rulebook {
   /** Made by `Rulebook.load` or `Rulebook.fromText` only; `new Rulebook()` throws. */
@@ -198,7 +210,7 @@ export class Rulebook {
    * fields the registry's `shapes` don't allow, string literals compared with a field whose shape
    * lists other values (`enum`, `const`), `needs` keys named like an `Object.prototype`
    * property, `matches` patterns that aren't literals, don't compile, or may backtrack
-   * exponentially, a macro variable named `belaykit`, a `belaykit.present` path that isn't a string
+   * exponentially, a CEL macro's variable named `belaykit`, a `belaykit.present` path that isn't a string
    * literal, has an empty key, or reads a field the known keys and shapes don't allow (checked as
    * field access is), templated params (a placeholder checked like a `when`, a known type that
    * can't become text, a stray or empty brace) and a brace in a param the action doesn't template,
@@ -211,24 +223,64 @@ export class Rulebook {
    * `guard` of each action a rule names, checked like a `when` and reported once per action.
    * Registry problems (an unknown key in the registry or on a producer or action, a
    * function that won't register, a `params` or shape schema that won't compile, `templates` that
-   * don't name plain-string params, a `guard` that isn't a string, a shape for an undeclared key) are listed too. Throws listing every problem, naming sections and rules (from 1); a `TypeError`
-   * when `path` isn't a string.
+   * don't name plain-string params, a `guard` that isn't a string, a shape for an undeclared key) are listed too.
+   *
+   * Macros (since 0.3): `imports:` names macro files, relative to the rulebook, each `version: 1`,
+   * `macros:` (a name → `{ params?, body, description? }`) and its own `imports:`. A rulebook calls
+   * the macros of the files it imports itself, by name (`noErrorAndReady()`), in any `when`, a
+   * `selectFirst` list or a templated param's placeholder (not a guard); a body calls those of its
+   * own file and the files that file imports. Each call is expanded where it's written, so every
+   * check above applies to the expansion; a problem a body has alone is reported once, on the macro
+   * (`macro "x" (<file>): …`), and one that comes through a call's arguments at the call
+   * (`… when, in macro "x": …`); a macro nothing calls is still checked for its name, params, the
+   * names it reads and the macros it calls, but its body isn't compiled against the registry's
+   * functions, keys and shapes (`Rulebook.checkMacros` checks a whole file against them). Refused
+   * too: a missing or unreadable file; a cycle of imports or of calls; a macro name defined in two files, or that CEL, a registered function, `belaykit`, `cel` or a CEL reserved
+   * word already has; a param whose name a `selectFirst` binding couldn't have, or that the body never
+   * uses; a body that reads a name besides `ws`, its params and the variables it binds; a call with
+   * the wrong number of arguments or written as a method; an argument that a variable the body binds
+   * would capture; an expansion too large to check.
+   *
+   * Throws listing every problem, naming sections and rules (from 1); a `TypeError` when `path`
+   * isn't a string.
    */
   static load(path: string, registry: Registry<any>): Rulebook;
-  /** The same, from text; a `TypeError` when `text` isn't a string. */
-  static fromText(text: string, registry: Registry<any>): Rulebook;
+  /**
+   * The same, from text; imports resolve from `options.baseDir`. A `TypeError` when `text` isn't a
+   * string, for an option it doesn't take, or when `baseDir` isn't a string.
+   */
+  static fromText(text: string, registry: Registry<any>, options?: RulebookTextOptions): Rulebook;
   /**
    * Every problem `fromText` would throw for, one string each; `[]` when the text is clean.
    * YAML that doesn't parse is one problem (`YAML: …`). Never throws for a problem in the text; a
    * broken registry (one without `producers` or `actions`) still throws, as does text that isn't a
-   * string (a `TypeError`).
+   * string or options `fromText` wouldn't take (a `TypeError`).
    */
-  static check(text: string, registry: Registry<any>): string[];
+  static check(text: string, registry: Registry<any>, options?: RulebookTextOptions): string[];
+  /**
+   * Every problem in a macro file's text, against `registry` (since 0.3); `[]` when it's clean. Each macro in
+   * it is checked as a rulebook calling it would check it, whether or not one does: its name, params and
+   * calls, cycles, its body against the registry's functions, and the keys it reads against those the
+   * registry names (`initialKeys`, any `writes`, the keys of `shapes`: a file has no `needs`) and their shapes.
+   * A param stands for any value, so fields read through one are checked where the macro is called. Without
+   * `options.baseDir` its imports are a problem and aren't read; its own macros are still checked.
+   * Imports resolve from `options.baseDir`, and an imported file's macros are checked as far as this
+   * file's call them. The file's own problems carry no file name (`macro "x": …`); the registry's own
+   * problems are listed too. Given a rulebook, it says so, and to use `check`. Throws as `check` does.
+   */
+  static checkMacros(text: string, registry: Registry<any>, options?: RulebookTextOptions): string[];
 
   /** The sections as loaded (a copy). */
   readonly sections: Section[];
   /** Every `needs` key, across sections (a copy). */
   readonly declaredKeys: string[];
+
+  /**
+   * What this rulebook may call, as Markdown (since 0.3): `describeFunctions(registry)` for its registry, then the
+   * macros of the files it imports itself, by name, each with its call form, file, description and body as
+   * written. A rulebook without imports gives exactly `describeFunctions(registry)`.
+   */
+  describeFunctions(): string;
 
   /**
    * The agent's initial working set, as a copy with nothing added: each `needs` key is absent until

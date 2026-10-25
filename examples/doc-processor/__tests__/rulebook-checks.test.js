@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
 import { loadFixture, Rulebook } from '@belaykit/rulebook';
@@ -12,6 +12,8 @@ import { finalize, isDocumentDone } from '../src/steps.js';
 const EXAMPLE = fileURLToPath(new URL('..', import.meta.url));
 const CLI = join(EXAMPLE, 'node_modules', '.bin', 'belaykit-rulebook');
 const FIXTURES = join(EXAMPLE, 'fixtures');
+const RULES = dirname(RULEBOOK);
+const MACROS = 'snippets.macros.yaml';
 
 // Runs the rulebook's command as an author would; returns its exit status and output.
 function check(file) {
@@ -22,14 +24,24 @@ function check(file) {
   }
 }
 
+// A copy of the rulebook and the macro file it imports, in a new folder, with `edit` applied to one of them.
+// Returns the copied rulebook's path.
+function brokenCopy(edit, file = 'doc-processor.rules.yaml') {
+  const folder = mkdtempSync(join(tmpdir(), 'doc-processor-'));
+  for (const name of ['doc-processor.rules.yaml', MACROS]) {
+    const text = readFileSync(join(RULES, name), 'utf-8');
+    writeFileSync(join(folder, name), name === file ? edit(text) : text);
+  }
+  return join(folder, 'doc-processor.rules.yaml');
+}
+
 describe('the rulebook passes its checks before it runs', () => {
   test('belaykit-rulebook check passes the rulebook', () => {
     expect(check('rules/doc-processor.rules.yaml')).toEqual({ status: 0, out: 'rules/doc-processor.rules.yaml: ok\n' });
   });
 
   test('a copy with a misspelled action is refused, naming the section and rule', () => {
-    const broken = join(mkdtempSync(join(tmpdir(), 'doc-processor-')), 'broken.rules.yaml');
-    writeFileSync(broken, readFileSync(RULEBOOK, 'utf-8').replace('action: classify_snippet', 'action: classify_snipet'));
+    const broken = brokenCopy((text) => text.replace('action: classify_snippet', 'action: classify_snipet'));
 
     const { status, out } = check(broken);
     expect(status).toBe(1);
@@ -37,14 +49,25 @@ describe('the rulebook passes its checks before it runs', () => {
   });
 
   // The registry's shape for ws.snippets is z.toJSONSchema of the snippet's own zod schema.
-  test.each([
-    ['a selectFirst binding', 'snippet.classification.ambiguity != ""', 'snippet.classification.ambigity != ""', 'section "review" rule 2 (flag_ambiguity) when: unknown field "ambigity" on snippet.classification'],
-    ['a macro variable', 's.classification == null && s.error == null', 's.classification == null && s.eror == null', 'section "classify" when: unknown field "eror" on s (an item of ws.snippets)'],
-  ])('a copy with a misspelled snippet field read through %s is refused', (_label, right, wrong, message) => {
-    const broken = join(mkdtempSync(join(tmpdir(), 'doc-processor-')), 'broken.rules.yaml');
-    writeFileSync(broken, readFileSync(RULEBOOK, 'utf-8').replace(right, wrong));
+  test('a copy with a misspelled snippet field read through a selectFirst binding is refused', () => {
+    const broken = brokenCopy((text) => text.replace('snippet.classification.ambiguity != ""', 'snippet.classification.ambigity != ""'));
 
-    expect(check(broken)).toEqual({ status: 1, out: `${broken}: ${message}\n` });
+    expect(check(broken)).toEqual({ status: 1, out: `${broken}: section "review" rule 2 (flag_ambiguity) when: unknown field "ambigity" on snippet.classification\n` });
+  });
+
+  // The macro's param stands for whatever each call passes, so the misspelling is found at both calls,
+  // through the CEL macro variable `s` and through the rule's binding `snippet`.
+  test('a copy whose macro misspells a snippet field is refused where the macro is called', () => {
+    const broken = brokenCopy((text) => text.replace('s.error == null', 's.eror == null'), MACROS);
+
+    expect(check(broken)).toEqual({
+      status: 1,
+      out: [
+        `${broken}: section "classify" rule 1 (classify) when, in macro "unclassified": unknown field "eror" on snippet (an item of ws.snippets)`,
+        `${broken}: section "classify" when, in macro "unclassified": unknown field "eror" on s (an item of ws.snippets)`,
+        '',
+      ].join('\n'),
+    });
   });
 
   test.each(readdirSync(FIXTURES).filter((file) => file.endsWith('.yaml')))('fixture %s runs as it says', async (file) => {
@@ -60,7 +83,7 @@ describe('the rulebook passes its checks before it runs', () => {
   // the full agent, where the code check would have rejected it.
   test('a copy whose classify section no longer waits for acceptance still never calls the model', async () => {
     const edited = readFileSync(RULEBOOK, 'utf-8')
-      .replace('when: ws.accepted == true && ws.snippets.exists(s, s.classification == null', 'when: ws.snippets.exists(s, s.classification == null');
+      .replace('when: ws.accepted == true && ws.snippets.exists(s, unclassified(s))', 'when: ws.snippets.exists(s, unclassified(s))');
     const calls = [];
     const classifier = { askJson: async (request) => { calls.push(request); return { topics: [], type: 'note', themes: [], ambiguity: '' }; }, systemPrompt: '', schema: {} };
     const fixture = {
@@ -68,7 +91,7 @@ describe('the rulebook passes its checks before it runs', () => {
         snippets: [{ n: 1, header: 'H', text: '- a', error: null, reviewed: false, classification: null }] },
       expect: { status: 'no_match' },
     };
-    const run = await Rulebook.fromText(edited, registry).runFixture({ fixture, deps: { classifier }, finishChecker: isDocumentDone, finalizer: finalize });
+    const run = await Rulebook.fromText(edited, registry, { baseDir: RULES }).runFixture({ fixture, deps: { classifier }, finishChecker: isDocumentDone, finalizer: finalize });
 
     expect(calls).toEqual([]);
     expect(run.trace.at(-1).evaluated).toEqual([{ choice: 'classify', matched: false, detail: { guard: false } }]);
@@ -76,15 +99,16 @@ describe('the rulebook passes its checks before it runs', () => {
 
   test('the ambiguity flag\'s wording comes from the rulebook', async () => {
     const reworded = readFileSync(RULEBOOK, 'utf-8').replace('reason: "ambiguous: {', 'reason: "unclear: {');
-    const rules = Rulebook.fromText(reworded, registry);
+    const rules = Rulebook.fromText(reworded, registry, { baseDir: RULES });
     const run = await rules.runFixture({ fixture: loadFixture(join(FIXTURES, 'review-flags.yaml')), finishChecker: isDocumentDone, finalizer: finalize });
 
     expect(run.result.flags).toContainEqual({ snippet: 2, reason: 'unclear: music, or podcasts?' });
   });
 
-  test('the committed function reference matches the registry', () => {
-    const reference = execFileSync(CLI, ['reference', '--registry', 'src/registry.js#registry'], { cwd: EXAMPLE, encoding: 'utf-8' });
+  test('the committed function reference matches the rulebook and its registry', () => {
+    const reference = execFileSync(CLI, ['reference', 'rules/doc-processor.rules.yaml', '--registry', 'src/registry.js#registry'], { cwd: EXAMPLE, encoding: 'utf-8' });
 
+    expect(reference).toContain('## unclassified');
     expect(readFileSync(join(EXAMPLE, 'rules', 'functions.md'), 'utf-8')).toBe(reference);
   });
 });

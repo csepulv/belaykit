@@ -1,0 +1,5 @@
+version: 1
+imports: [./loop-b.macros.yaml]
+macros:
+  isA:
+    body: "true"

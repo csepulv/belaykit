@@ -1,10 +1,16 @@
 {
-  "$comment": "A BelayKit rulebook: version, hitPolicyDefault, outputs (what rules.decide returns), and sections, each with a name, when, needs, hitPolicy, exhaustive and rules; a rule has an optional id and selectFirst (one binding name mapped to a CEL list expression), a when, a then naming a registered action, and a why. Anything else is a CEL expression or a registered action.",
+  "$comment": "A BelayKit rulebook: version, imports (macro files, relative to the rulebook), hitPolicyDefault, outputs (what rules.decide returns), and sections, each with a name, when, needs, hitPolicy, exhaustive and rules; a rule has an optional id and selectFirst (one binding name mapped to a CEL list expression), a when, a then naming a registered action, and a why. Anything else is a CEL expression or a registered action.",
   "type": "object",
   "required": ["version", "sections"],
   "additionalProperties": false,
   "properties": {
     "version": { "const": 1 },
+    "imports": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string" }
+    },
     "hitPolicyDefault": { "enum": ["FIRST", "ALL"] },
     "outputs": {
       "type": "array",

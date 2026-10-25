@@ -244,8 +244,8 @@ both), so you can compare how each way writes the decisions.
 
 ```bash
 cd examples/doc-processor
-pnpm run check                                       # belaykit-rulebook check: "rules/doc-processor.rules.yaml: ok"
-pnpm -s run reference > rules/functions.md           # BelayKit's helpers and the registry's functions, as Markdown
+pnpm run check                                       # belaykit-rulebook check: the rulebook and its macro file, each "ok"
+pnpm -s run reference > rules/functions.md           # BelayKit's helpers, the registry's functions and the macros, as Markdown
 ```
 
 A **fixture** pins what the rulebook decides, without a model: where a run starts, what each producer returns, and how
@@ -256,5 +256,5 @@ starts with three classified snippets and states the flags the review must raise
 ## Next
 
 - [Concepts](concepts.md): the loop, choice sets and modes, outcomes, the trace, and the options.
-- [Rulebooks](rulebooks.md): the file format, the registry, checks, fixtures and `regather`.
+- [Rulebooks](rulebooks.md): the file format, macros, the registry, checks, fixtures and `regather`.
 - The API reference: [`@belaykit/core`](api/core.md) and [`@belaykit/rulebook`](api/rulebook.md).

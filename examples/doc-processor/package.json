@@ -1,14 +1,14 @@
 {
   "name": "doc-processor",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "BelayKit's example agent: extract a document's snippets, place each in a topic map and type it — written with and without a rulebook.",
   "private": true,
   "license": "MIT",
   "type": "module",
   "scripts": {
     "test": "vitest run",
-    "check": "belaykit-rulebook check rules/doc-processor.rules.yaml --registry src/registry.js#registry",
-    "reference": "belaykit-rulebook reference --registry src/registry.js#registry"
+    "check": "belaykit-rulebook check rules/doc-processor.rules.yaml rules/snippets.macros.yaml --registry src/registry.js#registry",
+    "reference": "belaykit-rulebook reference rules/doc-processor.rules.yaml --registry src/registry.js#registry"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",

@@ -15,7 +15,7 @@ True when every key on the path exists and the last value isn't null. A missing 
 
 | Parameter | Type | Description |
 | --- | --- | --- |
-| container | dyn | A map to read from: ws, a selectFirst binding or a macro variable |
+| container | dyn | A map to read from: ws, a selectFirst binding or a CEL macro variable |
 | path | dyn | Keys joined by dots, such as "facts.recurrence": a string literal, checked at load like the fields it reads |`;
 
 const REFERENCE = `# Rulebook functions

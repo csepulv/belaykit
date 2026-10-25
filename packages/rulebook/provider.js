@@ -82,8 +82,10 @@ function filledParams(rule, templated = new Set(), variables, rulebookEnv) {
   const environment = rule.selectFirst?.env ?? rulebookEnv;
   const filled = { ...rule.params };
   for (const param of toFill) {
+    // A placeholder that calls a macro runs its expansion (load.js).
     filled[param] = parseTemplate(rule.params[param]).parts
-      .map((part) => ('text' in part ? part.text : placeholderText(param, part, environment, variables)))
+      .map((part) => ('text' in part ? part.text
+        : placeholderText(param, { ...part, expression: rule.placeholders.get(part.expression) ?? part.expression }, environment, variables)))
       .join('');
   }
   return Object.freeze(filled);

@@ -3,14 +3,16 @@
 // starting keys, re-gathering, fixture runs, and decisions. Its CEL environment stays inside it.
 import { decide } from './decide.js';
 import { runFixture } from './fixture.js';
-import { checkRulebook, loadRulebook, loadRulebookText } from './load.js';
+import { checkMacroText, checkRulebook, loadRulebook, loadRulebookText } from './load.js';
 import { initialWorkingSet, rulebookProvider } from './provider.js';
+import { describeFunctions, describeMacros } from './reference.js';
 
 // Only `load` and `fromText` make a rulebook, so every one has passed the checks.
 const CHECKED = Symbol('checked rulebook');
 
 const FIXTURE_OPTIONS = ['fixture', 'deps', 'finishChecker', 'finalizer', 'maxIterations'];
 const DECIDE_OPTIONS = ['deps', 'maxIterations'];
+const TEXT_OPTIONS = ['baseDir'];
 
 export class Rulebook {
   #loaded;
@@ -27,14 +29,20 @@ export class Rulebook {
     return new Rulebook(CHECKED, loadRulebook(path, registry), registry);
   }
 
-  static fromText(text, registry) {
+  static fromText(text, registry, options = {}) {
     requireString('Rulebook.fromText', 'text', text);
-    return new Rulebook(CHECKED, loadRulebookText(text, registry), registry);
+    return new Rulebook(CHECKED, loadRulebookText(text, registry, textOptions('Rulebook.fromText', options)), registry);
   }
 
-  static check(text, registry) {
+  static check(text, registry, options = {}) {
     requireString('Rulebook.check', 'text', text);
-    return checkRulebook(text, registry);
+    return checkRulebook(text, registry, textOptions('Rulebook.check', options));
+  }
+
+  // A macro file on its own (since 0.3): every macro in it, whether or not a rulebook calls it.
+  static checkMacros(text, registry, options = {}) {
+    requireString('Rulebook.checkMacros', 'text', text);
+    return checkMacroText(text, registry, textOptions('Rulebook.checkMacros', options));
   }
 
   // Copies, so a caller can't change what the rulebook runs.
@@ -44,6 +52,13 @@ export class Rulebook {
 
   get declaredKeys() {
     return [...this.#loaded.declaredKeys];
+  }
+
+  // What this rulebook may call: the registry's reference, then the macros its imports give it (since 0.3).
+  describeFunctions() {
+    const macros = describeMacros(this.#loaded.macros);
+    const reference = describeFunctions(this.#registry);
+    return macros ? `${reference}\n${macros}` : reference;
   }
 
   initialize(initial) {
@@ -91,12 +106,31 @@ function requireString(caller, argument, value) {
   if (typeof value !== 'string') throw new TypeError(`${caller}: ${argument} must be a string`);
 }
 
-// The registry as checked: its producers and actions are copied, so changing the caller's
-// registry later can't change what this rulebook runs.
+// A rulebook given as text has no folder of its own, so its imports resolve from `baseDir`.
+function textOptions(caller, options) {
+  // A string would otherwise read as keys "0", "1", …
+  if (options !== null && options !== undefined && (typeof options !== 'object' || Array.isArray(options))) {
+    throw new TypeError(`${caller}: options must be an object, such as { baseDir }`);
+  }
+  const unknown = Object.keys(options ?? {}).find((key) => !TEXT_OPTIONS.includes(key));
+  if (unknown !== undefined) throw new TypeError(`${caller}: unknown option "${unknown}" (options: ${TEXT_OPTIONS.join(', ')})`);
+  if (options?.baseDir !== undefined) requireString(caller, 'baseDir', options.baseDir);
+  return { baseDir: options?.baseDir };
+}
+
+// The registry as checked: its producers, actions and functions are copied, so changing the
+// caller's registry later can't change what this rulebook runs or what its reference lists.
 const keptRegistry = (registry) => ({
   ...registry,
   producers: copyEach(registry.producers),
   actions: copyEach(registry.actions),
+  ...(registry.functions && { functions: registry.functions.map(copyFunction) }),
+});
+
+const copyFunction = (entry) => ({
+  ...entry,
+  ...(Array.isArray(entry.params) && { params: entry.params.map((param) => ({ ...param })) }),
+  ...(entry.keyArgs && { keyArgs: { ...entry.keyArgs } }),
 });
 
 // `run` is kept bound to its entry, so an entry made from a class keeps its method.
@@ -105,14 +139,15 @@ const copyEach = (entries) => Object.fromEntries(Object.entries(entries).map(([n
   run: typeof entry.run === 'function' ? entry.run.bind(entry) : entry.run,
 }]));
 
-const describeSection = ({ name, when, needs, hitPolicy, rules }) => ({
-  name, when, needs: { ...needs }, hitPolicy, rules: rules.map(describeRule),
+// As written: an expression that calls a macro shows the call, not its expansion.
+const describeSection = ({ name, whenAsWritten, needs, hitPolicy, rules }) => ({
+  name, when: whenAsWritten, needs: { ...needs }, hitPolicy, rules: rules.map(describeRule),
 });
 
-const describeRule = ({ id, selectFirst, when, action, params, why }) => ({
+const describeRule = ({ id, selectFirst, whenAsWritten, action, params, why }) => ({
   id,
-  selectFirst: selectFirst && { name: selectFirst.name, expression: selectFirst.expression },
-  when,
+  selectFirst: selectFirst && { name: selectFirst.name, expression: selectFirst.asWritten },
+  when: whenAsWritten,
   action,
   params: structuredClone(params),
   why,

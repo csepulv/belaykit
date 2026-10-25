@@ -2,15 +2,16 @@
 // belaykit-rulebook: check rulebooks against an agent's registry before deploying them,
 // or print the registry's function reference. Exit 0 on success, 1 otherwise.
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
-import { checkRulebook } from './load.js';
+import { checkRulebook, checkText } from './load.js';
 import { describeFunctions } from './reference.js';
+import { Rulebook } from './rulebook.js';
 
 const USAGE = [
-  'Usage: belaykit-rulebook check <file>... --registry <module>#<export>',
-  '       belaykit-rulebook reference --registry <module>#<export>',
+  'Usage: belaykit-rulebook check <file>... --registry <module>#<export>   (rulebooks and macro files)',
+  '       belaykit-rulebook reference [<file>] --registry <module>#<export>',
 ].join('\n');
 
 class UsageError extends Error {}
@@ -32,7 +33,7 @@ async function main(args) {
 
 function checkFiles(files, registry) {
   if (files.length === 0) throw new UsageError(USAGE);
-  const problemsByFile = files.map((file) => [file, problemsIn(file, registry)]);
+  const problemsByFile = files.map((file) => [file, problemsIn(file, registry, checkText)]);
   for (const [file, problems] of problemsByFile) {
     if (problems.length === 0) console.log(`${file}: ok`);
     for (const problem of problems) console.error(`${file}: ${problem}`);
@@ -40,15 +41,27 @@ function checkFiles(files, registry) {
   return problemsByFile.every(([, problems]) => problems.length === 0) ? 0 : 1;
 }
 
+// The registry's reference; with a rulebook, that rulebook's, macros included (since 0.3). A rulebook
+// that doesn't load has no reference: its problems are printed, as `check` prints them.
 function printReference(files, registry) {
-  if (files.length > 0) throw new UsageError(USAGE);
-  process.stdout.write(describeFunctions(registry));
+  if (files.length > 1) throw new UsageError(USAGE);
+  if (files.length === 0) {
+    process.stdout.write(describeFunctions(registry));
+    return 0;
+  }
+  const [file] = files;
+  const problems = problemsIn(file, registry);
+  for (const problem of problems) console.error(`${file}: ${problem}`);
+  if (problems.length > 0) return 1;
+  process.stdout.write(Rulebook.load(file, registry).describeFunctions());
   return 0;
 }
 
-function problemsIn(file, registry) {
+// A file's imports resolve from its own folder, not from where the command runs. `check` takes macro files too
+// (since 0.3); `reference` takes a rulebook only.
+function problemsIn(file, registry, check = checkRulebook) {
   try {
-    return checkRulebook(readFileSync(file, 'utf-8'), registry);
+    return check(readFileSync(file, 'utf-8'), registry, { baseDir: dirname(resolve(file)), path: file });
   } catch (error) {
     if (error.code === 'ENOENT') return ['no such file'];
     if (error.code) return [`cannot read (${error.code})`];

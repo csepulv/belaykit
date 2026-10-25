@@ -1,6 +1,6 @@
 {
   "name": "belaykit",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "BelayKit's agent loop under its plain name: the same exports as @belaykit/core, which it re-exports.",
   "license": "MIT",
   "author": "Christian Sepulveda <dev@justideas.io>",

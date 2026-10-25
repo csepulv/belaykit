@@ -5,6 +5,7 @@
 // without a shape, a non-local $ref.
 import { helperPathCallOf, pathProblem } from './helpers.js';
 import { compileProblem, makeAjv } from './json-schema.js';
+import { childNodesOf } from './syntax-tree.js';
 
 // Macros that bind a variable to each item of their receiver: `list.exists(x, …)`.
 const BINDING_MACROS = new Set(['all', 'exists', 'exists_one', 'map', 'filter']);
@@ -280,11 +281,6 @@ function deref(schema, root, seen = new Set()) {
     .reduce((node, part) => (node && typeof node === 'object' ? node[part] : undefined), root);
   return target === undefined ? OPEN : deref(target, root, new Set(seen).add(schema.$ref));
 }
-
-const childNodesOf = (args) => {
-  if (Array.isArray(args)) return args.flatMap(childNodesOf);
-  return args !== null && typeof args === 'object' && 'op' in args ? [args] : [];
-};
 
 const literalStringOf = (node) => (node.op === 'value' && typeof node.args === 'string' ? node.args : null);
 // CEL integers are BigInts.

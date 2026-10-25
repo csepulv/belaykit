@@ -7,6 +7,7 @@
 # classified. Every review rule applies only to the snippet waiting for review
 # (doc_waiting), so they all act on the same one, whatever state a run starts from.
 version: 1
+imports: [./snippets.macros.yaml]   # unclassified(s)
 hitPolicyDefault: FIRST
 sections:
   - name: segment
@@ -39,11 +40,11 @@ sections:
         then: { action: mark_reviewed }
 
   - name: classify
-    when: ws.accepted == true && ws.snippets.exists(s, s.classification == null && s.error == null)
+    when: ws.accepted == true && ws.snippets.exists(s, unclassified(s))
     # The section's when holds only while a snippet waits, so its one rule always selects one.
     exhaustive: false
     rules:
       - id: classify
         selectFirst: { snippet: ws.snippets }
-        when: snippet.classification == null && snippet.error == null
+        when: unclassified(snippet)
         then: { action: classify_snippet }

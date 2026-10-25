@@ -15,7 +15,7 @@ export const HELPERS = [
       + 'way, is false; a step into a value that isn\'t a map, and an empty path or segment, are errors. `has()` is true '
       + 'for a key holding null.',
     params: [
-      { name: 'container', description: 'A map to read from: ws, a selectFirst binding or a macro variable' },
+      { name: 'container', description: 'A map to read from: ws, a selectFirst binding or a CEL macro variable' },
       { name: 'path', description: 'Keys joined by dots, such as "facts.recurrence": a string literal, checked at load like the fields it reads' },
     ],
     handler: (_helpers, container, path) => present(container, path),

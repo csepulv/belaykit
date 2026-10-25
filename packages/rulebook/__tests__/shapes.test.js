@@ -70,7 +70,7 @@ describe('a field read through a selectFirst binding', () => {
   });
 });
 
-describe('a field read through a macro variable', () => {
+describe('a field read through a CEL macro variable', () => {
   test.each(['exists', 'all', 'exists_one', 'filter', 'map'])('in %s, a misspelled field of the item is a load error', (macro) => {
     const section = macro === 'filter' || macro === 'map' ? `size(ws.snippets.${macro}(s, s.reviewd)) > 0` : `ws.snippets.${macro}(s, s.reviewd)`;
     expect(problemsOf({ section })).toEqual([`section "review" when: unknown field "reviewd" on s (an item of ws.snippets)`]);
@@ -195,7 +195,7 @@ describe('a string literal compared with a field that allows only certain values
       .toEqual([`${place}: snippet.classification.type is compared with "nte", which its shape doesn't allow (note, task)`]);
   });
 
-  test('through a macro variable, the item\'s enum is checked', () => {
+  test('through a CEL macro variable, the item\'s enum is checked', () => {
     expect(problemsOf({ section: 'ws.snippets.exists(s, s.classification.type == "tsk")' }, { registry: withMeta }))
       .toEqual(['section "review" when: s.classification.type is compared with "tsk", which its shape doesn\'t allow (note, task)']);
   });

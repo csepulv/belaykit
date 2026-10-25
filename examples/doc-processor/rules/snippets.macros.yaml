@@ -1,0 +1,9 @@
+# Macros the doc-processor's rulebook imports: a condition written once and called by name, so the
+# classify section and its rule can't drift apart. Each call is expanded where it's written, and
+# checked there against the registry's shapes.
+version: 1
+macros:
+  unclassified:
+    params: [s]
+    body: s.classification == null && s.error == null
+    description: The snippet hasn't been classified, and classifying it hasn't failed.

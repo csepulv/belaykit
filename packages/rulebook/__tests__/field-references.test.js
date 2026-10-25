@@ -47,11 +47,19 @@ describe('field references are read from the syntax tree', () => {
     expect(errorsOf('ws["classification"].ambiguity != null')).toEqual([]);
   });
 
+  test('a needs key is known, though its producer declares no writes', () => {
+    const quietProducer = { ...registry, producers: { classify_item: {} }, shapes: {} };
+
+    expect(Rulebook.check(rulebookWith('ws.classification != null'), quietProducer)).toEqual([]);
+    expect(Rulebook.check(rulebookWith('ws.clasification != null'), quietProducer))
+      .toEqual(['section "classify" rule 1 when: unknown ws field "clasification"']);
+  });
+
   test('a computed subscript is not checked', () => {
     expect(errorsOf('ws[ws.item] != null')).toEqual([]);
   });
 
-  test('a macro variable is not a ws reference', () => {
+  test('a CEL macro variable is not a ws reference', () => {
     expect(errorsOf('ws.classification.projects.exists(p, p.clasification == "x")')).toEqual([]);
   });
 

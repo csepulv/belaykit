@@ -67,17 +67,18 @@ expect: { status: completed, fired: ["gather classification", "urgent"], result:
 ```
 
 `rules.runFixture({ fixture: loadFixture(path), finishChecker, finalizer })` runs it and returns its `mismatches`,
-empty when `expect` holds. The `belaykit-rulebook` command checks rulebook files before you deploy them:
+empty when `expect` holds. The `belaykit-rulebook` command checks rulebook files, and macro files, before you deploy
+them:
 
 ```bash
-npx belaykit-rulebook check rulebooks/*.rules.yaml --registry src/registry.js#registry
+npx belaykit-rulebook check rulebooks/*.rules.yaml rulebooks/*.macros.yaml --registry src/registry.js#registry
 ```
 
 ## Learn more
 
 - [Rulebooks](https://github.com/csepulv/belaykit/blob/main/documentation/rulebooks.md): the format, `needs` keys (gathered when present),
-  `selectFirst`, CEL, BelayKit's helpers and registered functions, the registry (guarded actions included), checks,
-  the catch-all rule, fixtures,
+  `selectFirst`, CEL, BelayKit's helpers and registered functions, macros (named CEL expressions in files a rulebook
+  imports), the registry (guarded actions included), checks, the catch-all rule, fixtures,
   `regather`, and deciding with `rules.decide`.
 - [Getting started](https://github.com/csepulv/belaykit/blob/main/documentation/getting-started.md): an agent written in code
   and with a rulebook.

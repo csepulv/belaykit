@@ -10,7 +10,7 @@ True when every key on the path exists and the last value isn't null. A missing 
 
 | Parameter | Type | Description |
 | --- | --- | --- |
-| container | dyn | A map to read from: ws, a selectFirst binding or a macro variable |
+| container | dyn | A map to read from: ws, a selectFirst binding or a CEL macro variable |
 | path | dyn | Keys joined by dots, such as "facts.recurrence": a string literal, checked at load like the fields it reads |
 
 ## doc_waiting
@@ -34,3 +34,15 @@ True when any item of the first list is missing from the second: a topic or them
 | --- | --- | --- |
 | items | list<dyn> | What the classifier returned |
 | known | list<dyn> | What the map holds |
+
+Macros, from the files this rulebook imports: each is expanded where it's called, so its body is checked there.
+
+## unclassified
+
+`unclassified(s)`, from `snippets.macros.yaml`
+
+The snippet hasn't been classified, and classifying it hasn't failed.
+
+```cel
+s.classification == null && s.error == null
+```

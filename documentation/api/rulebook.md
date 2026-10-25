@@ -31,7 +31,7 @@ type is known and isn't `bool`, rules sharing an explicit `id`, `ws` keys nothin
 literal keys passed to a function with `keyArgs`), fields the registry's `shapes` don't allow, string literals
 compared with a field whose shape lists other values (`enum`, `const`), `needs` keys named like
 an `Object.prototype` property, `matches` patterns that aren't literals, don't compile, or may backtrack
-exponentially, a macro variable named `belaykit`, a `belaykit.present` path that isn't a string literal, has an empty
+exponentially, a CEL macro's variable named `belaykit`, a `belaykit.present` path that isn't a string literal, has an empty
 key, or reads a field the known keys and shapes don't allow (checked as field access is), templated params (a
 placeholder checked like a `when`, a known type that can't become text, a stray or empty brace) and a brace in a param
 the action doesn't template, and `selectFirst` bindings: a name that is `ws`, `belaykit`, a CEL reserved word or a
@@ -44,27 +44,62 @@ The registry's own problems are listed too: an unknown key (in the registry, on 
 function that won't register, a `params` or shape schema that won't compile, `templates` that don't name plain-string
 params, a `guard` that isn't a string, a shape for a key nothing declares.
 
+Since 0.3, a rulebook's `imports:` names macro files, relative to the rulebook. Each call to a macro is expanded where
+it's written, so every check above applies to the expansion. A problem a macro's body has alone is reported once, on
+the macro (`macro "x" (<file>): …`); one that comes through a call's arguments is reported at the call
+(`… when, in macro "x": …`). A macro nothing calls is still checked for its own name, params, the names it reads and
+the macros it calls, but its body isn't compiled against the registry's functions, keys and shapes;
+[`Rulebook.checkMacros`](#rulebookcheckmacrostext-registry-options) checks a whole file against them. Refused too:
+- a missing or unreadable macro file, or a cycle of imports;
+- a macro name defined in two files, or one that CEL, a registered function, `belaykit`, `cel` or a CEL reserved word
+  already has;
+- a param whose name a `selectFirst` binding couldn't have, or that the body never uses;
+- a body that reads a name besides `ws`, its params and the variables it binds, or macros that call each other in a
+  cycle;
+- a call with the wrong number of arguments, or written as a method;
+- an argument that a variable the body binds would capture;
+- an expansion too large to check.
+
 Throws listing every problem, each naming its section and rule (rules count from 1): the file's shape problems alone
 if there are any, then everything else. A relative `path` is resolved from the current directory (`process.cwd()`),
 not from the calling module. A `path` that isn't a string is a `TypeError`.
 
-#### `Rulebook.fromText(text, registry)`
+#### `Rulebook.fromText(text, registry, options)`
 
 ```ts
-static fromText(text: string, registry: Registry<any>): Rulebook;
+static fromText(text: string, registry: Registry<any>, options?: RulebookTextOptions): Rulebook;
 ```
 
-The same, from text; `text` that isn't a string is a `TypeError`.
+The same, from text; its imports resolve from `options.baseDir`. `text` that isn't a string, an option it doesn't
+take, or a `baseDir` that isn't a string is a `TypeError`.
 
-#### `Rulebook.check(text, registry)`
+#### `Rulebook.check(text, registry, options)`
 
 ```ts
-static check(text: string, registry: Registry<any>): string[];
+static check(text: string, registry: Registry<any>, options?: RulebookTextOptions): string[];
 ```
 
 Every problem `fromText` would throw for, one string each; `[]` when the text is clean. YAML that doesn't parse is one
 problem (`YAML: …`). Never throws for a problem in the text; a broken registry (one without `producers` or `actions`)
-still throws, and so does `text` that isn't a string (a `TypeError`).
+still throws, and so do `text` that isn't a string and options `fromText` wouldn't take (a `TypeError`). Given a macro
+file, it says so, and to use `Rulebook.checkMacros`.
+
+#### `Rulebook.checkMacros(text, registry, options)`
+
+```ts
+static checkMacros(text: string, registry: Registry<any>, options?: RulebookTextOptions): string[];
+```
+
+Since 0.3: every problem in a macro file's text, against `registry`; `[]` when it's clean. Each macro in the file is
+checked as a rulebook calling it would check it, whether or not one does: its name, its params and calls, cycles, and
+its body against the registry's functions, keys and shapes. A macro file has no `needs`, so the keys it knows are the
+ones the registry names: `initialKeys`, any action's or producer's `writes`, and the keys of `shapes`. A key only a
+rulebook's `needs` declares is reported as unknown; declare it in its producer's `writes`. A param stands for any
+value, so a field read through one is checked where the macro is called. Imports resolve from `options.baseDir` (without
+it, they are a problem and aren't read, and the file's own macros are still checked), and an
+imported file's macros are checked as far as this file's macros call them; check that file to check the rest. The
+file's own problems name the macro without a file (`macro "x": …`), and the registry's own problems are listed too.
+Given a rulebook, it says so, and to use `Rulebook.check`. It throws as `Rulebook.check` does.
 
 #### `rulebook.sections`, `rulebook.declaredKeys`
 
@@ -75,6 +110,16 @@ readonly declaredKeys: string[];
 
 The sections as loaded, and every `needs` key across them. Both are copies: changing them doesn't change the
 rulebook.
+
+#### `rulebook.describeFunctions()`
+
+```ts
+describeFunctions(): string;
+```
+
+What this rulebook may call, as Markdown (since 0.3): [`describeFunctions(registry)`](#describefunctions) for its
+registry, then the macros of the files it imports itself, by name, each with its call form, file, description and
+body as written. A rulebook without imports gives exactly `describeFunctions(registry)`.
 
 #### `rulebook.initialize(initial)`
 
@@ -140,6 +185,18 @@ an output or `needs` key already present in `initial` fails the run, naming it. 
 `maxIterations` bounds the run (default 25). The trace is the default one. Rejects with a `TypeError` when the
 rulebook declares no `outputs`, for an option it doesn't take, or for an option's bad value (`maxIterations: 0`).
 
+### `RulebookTextOptions`
+
+```ts
+interface RulebookTextOptions {
+  baseDir?: string;   // where the rulebook's imports resolve from
+}
+```
+
+How a rulebook given as text is read (since 0.3). A file's imports resolve from its own folder; text has none, so
+`baseDir` stands in for it, and a relative `baseDir` is resolved from the current directory (`process.cwd()`). Text
+with `imports` and no `baseDir` is a load problem.
+
 ### `Decision`
 
 ```ts
@@ -165,7 +222,8 @@ interface Section {
 }
 ```
 
-A section as loaded: when it applies, what it gathers, how its rules are selected, and its rules.
+A section as loaded: when it applies, what it gathers, how its rules are selected, and its rules. Its expressions are
+as written: a call to a macro shows the call, not its expansion.
 
 ### `Rule`
 
@@ -180,7 +238,8 @@ interface Rule {
 }
 ```
 
-A rule as loaded. Each becomes a choice at run time, named by its `id`; explicit ids are unique within a section.
+A rule as loaded. Each becomes a choice at run time, named by its `id`; explicit ids are unique within a section. Its
+expressions are as written: a call to a macro shows the call, not its expansion.
 
 ### `WorkingSet`
 
@@ -214,7 +273,7 @@ and so are the name `belaykit`, a method on its type, `BelayKit`, and a method o
 ([Rulebooks](../rulebooks.md#belaykits-helpers)).
 
 `shapes` describe ws keys for the loader: every field a rulebook reads is followed through them, at any depth, from
-`ws.<key>`, from a `selectFirst` binding over `ws.<key>` (an item of the list) and from a macro's variable (`exists`,
+`ws.<key>`, from a `selectFirst` binding over `ws.<key>` (an item of the list) and from a CEL list macro's variable (`exists`,
 `all`, `exists_one`, `map`, `filter`). A field no shape allows is a load error, and so is a string literal compared
 (`==`, `!=`, `in [...]`) with a field whose shape lists its values (`enum`, `const`) but not that one. Checking stops at an object whose
 `additionalProperties` isn't `false` (`unevaluatedProperties` doesn't close one for the check), at a key without a
@@ -326,7 +385,7 @@ function describeFunctions(registry: Registry<any>): string;
 What a rulebook may call, as Markdown: BelayKit's helpers (`belaykit.*`) first, then the registry's functions, each
 with its signature, description and parameters, a note for `keyArgs`, and `version` in the header when set. CEL's
 built-in functions are left out. Throws when a function fails to register.
-`belaykit-rulebook reference` prints it.
+`belaykit-rulebook reference`, without a file, prints it.
 
 ## Fixtures
 
@@ -386,17 +445,21 @@ reports the same version.
 const schemaVersions: readonly number[];
 ```
 
-The rulebook `version:` values this package reads, today `[1]`. A rulebook with any other version is a load error.
+The rulebook `version:` values this package reads, today `[1]`. A rulebook with any other version is a load error. A
+macro file's `version:` is `1` too.
 
 ## The command
 
 `belaykit-rulebook` (installed with the package; run it with `npx` or from a `package.json` script) runs
-`Rulebook.check` on files, or prints `describeFunctions`:
+`Rulebook.check` on rulebooks and `Rulebook.checkMacros` on macro files (since 0.3; a file with `macros:` and no
+`sections:` is a macro file), or prints `describeFunctions`:
 
 ```bash
 npx belaykit-rulebook check <file>... --registry <module>#<export>   # exit 0 when every file is clean, 1 otherwise
-npx belaykit-rulebook reference --registry <module>#<export>
+npx belaykit-rulebook reference [<file>] --registry <module>#<export>
 ```
 
 `--registry` names the module, resolved from the current directory, and the export holding the registry. Each problem
-is printed prefixed by its file; a fatal error (a bad registry) is prefixed `belaykit-rulebook:`.
+is printed prefixed by its file; a fatal error (a bad registry) is prefixed `belaykit-rulebook:`. A file's imports
+resolve from its own folder, and a macro file whose imports lead back to it is a cycle. `reference` with a rulebook prints `rulebook.describeFunctions()`, its macros
+included; a rulebook with problems prints them instead, and exits 1.
