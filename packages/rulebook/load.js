@@ -13,7 +13,7 @@ import { Environment } from '@marcbachmann/cel-js';
 import isSafeRegex from 'safe-regex2';
 import { YAMLError, parse as parseYaml } from 'yaml';
 import { EMPTY_SEGMENT, HELPER_NAMES, NAMESPACE, NAMESPACE_TYPE, helperPathCallOf, pathProblem, registerHelpers } from './helpers.js';
-import { checkMacroDefinitions, labelOf, macroSite, readImports, readMacroText } from './macros.js';
+import { checkMacroDefinitions, importSource, labelOf, macroSite, readImports, readMacroText } from './macros.js';
 import { compileParamsCheckers, compileTemplatedParams, paramsProblems } from './params.js';
 import { keyPathPlace, schemaMessage } from './schema-message.js';
 import { nodesOf } from './syntax-tree.js';
@@ -71,10 +71,10 @@ const MACRO_FILE_KEY_HINT = ' (a macro file knows the keys its registry names: i
 const RULEBOOK_GIVEN = 'this is a rulebook (sections:); check it with Rulebook.check or belaykit-rulebook check';
 
 // Every problem in a macro file, each of its macros checked as a rulebook calling it would check it, whether
-// or not one does (since 0.3); [] when it's clean. `path`, the command's, lets an import back to the file read
-// as a cycle.
-export function checkMacroText(text, registry, { baseDir, path } = {}) {
-  const imported = readMacroText(text, baseDir, path);
+// or not one does (since 0.3); [] when it's clean. `path` (public since 0.4; the command passes its own) places the
+// file among the others, so an import back to it reads as a cycle.
+export function checkMacroText(text, registry, { baseDir, imports, path } = {}) {
+  const imported = readMacroText(text, importSource({ baseDir, imports }), path);
   const checks = prepareChecks(registry, { imported, knownKeys: shapeKeysOf(registry), unknownKeyHint: MACRO_FILE_KEY_HINT });
   for (const macro of imported.visible.values()) {
     if (checks.macroCheck.isExpandable(macro)) checks.bodyProblemsOf(macro);
@@ -122,8 +122,8 @@ function parseRulebookYaml(text) {
   }
 }
 
-// `baseDir` is where the rulebook's imports resolve from: its own folder.
-export function loadRulebookText(text, registry, { baseDir } = {}) {
+// `baseDir` is where the rulebook's imports resolve from: its own folder; or `imports` holds them as text (since 0.4).
+export function loadRulebookText(text, registry, { baseDir, imports } = {}) {
   const document = parseRulebookYaml(text);
   if (!validateSchema(document)) {
     // A bad property name comes as two errors: the name's own (kept) and a generic one.
@@ -132,7 +132,7 @@ export function loadRulebookText(text, registry, { baseDir } = {}) {
     throw new RulebookError([...new Set(errors.map((error) => schemaMessage(error, (path) => rulebookPlace(document, path)))), ...hint]);
   }
   const declaredKeys = [...new Set(document.sections.flatMap((section) => Object.keys(section.needs ?? {})))];
-  const checks = prepareChecks(registry, { imported: readImports(document.imports, baseDir), knownKeys: declaredKeys });
+  const checks = prepareChecks(registry, { imported: readImports(document.imports, importSource({ baseDir, imports })), knownKeys: declaredKeys });
   const { env, shapes, errors, compile, paramsCheckers, templated, isBraceCheckable, actionGuards } = checks;
   const expand = (owner, expression, options) => checks.expandIn(checks.callable)(owner, expression, options).text;
 
@@ -192,10 +192,12 @@ export function loadRulebookText(text, registry, { baseDir } = {}) {
 
   const outputs = document.outputs ?? null;
   errors.push(...outputErrors(outputs ?? [], registry, declaredKeys));
+  const evidence = document.evidence ?? [];
+  errors.push(...evidenceErrors(evidence, outputs, checks.knownFields));
 
   const problems = unresolvedErrors(errors, checks.failure);
   if (problems.length) throw new RulebookError(problems);
-  return { sections, declaredKeys, env, templated, guards, outputs, macros: [...checks.callable.values()] };
+  return { sections, declaredKeys, env, templated, guards, outputs, evidence, macros: [...checks.callable.values()] };
 }
 
 // What every check against a registry shares, a rulebook's and a macro file's (since 0.3): the registry's
@@ -314,7 +316,7 @@ function prepareChecks(registry, { imported, knownKeys, unknownKeyHint = '' }) {
   }
   // A macro whose name is refused isn't callable: the name stays CEL's or the registry's (checkMacroDefinitions).
   const callable = new Map([...macros].filter(([name]) => !macroCheck.refused.has(name)));
-  return { env, shapes, errors, compile, expandIn, bodyProblemsOf, callable, macroCheck, paramsCheckers, templated, isBraceCheckable, actionGuards, failure: imported.failure };
+  return { env, shapes, errors, compile, expandIn, bodyProblemsOf, callable, macroCheck, paramsCheckers, templated, isBraceCheckable, actionGuards, knownFields, failure: imported.failure };
 }
 
 // While an import has a problem, a call to a name nothing defines may be to a macro it would have defined,
@@ -374,6 +376,23 @@ function outputErrors(outputs, registry, declaredKeys) {
     if (producer !== undefined) return [`output "${output}" is written by producer "${producer}", which would set it before any rule decides`];
     return written.has(output) ? [] : [`output "${output}": no action writes it`];
   });
+}
+
+// What every decision shows (since 0.4): keys the rulebook or registry declares, other than the outputs (returned
+// already), each once. Only `decide` returns it, so a rulebook without outputs has no use for it. Each mistake is
+// reported, none hiding another, so repeats are checked here rather than by the schema.
+function evidenceErrors(evidence, outputs, knownFields) {
+  const withoutOutputs = evidence.length > 0 && outputs === null ? ['evidence applies to a rulebook with outputs (what decide returns)'] : [];
+  const repeated = new Set(evidence.filter((key, index) => evidence.indexOf(key) !== index));
+  return [...withoutOutputs, ...[...new Set(evidence)].flatMap((key) => [
+    ...(repeated.has(key) ? [`evidence "${key}" is listed more than once`] : []),
+    ...keyErrors(key),
+  ])];
+
+  function keyErrors(key) {
+    if (outputs?.includes(key)) return [`evidence "${key}" is an output; decide returns it already`];
+    return knownFields.has(key) ? [] : [`evidence "${key}": nothing declares it (a needs key, initialKeys, or a producer's or action's writes)`];
+  }
 }
 
 // `selectFirst: { <name>: <list expression> }`. The expression is checked like any other

@@ -2,7 +2,7 @@
 // module reads and resolves the imports; the loader expands each call where it's written, so
 // every check a rulebook expression gets applies to the expansion (load.js).
 import { readFileSync } from 'node:fs';
-import { dirname, relative, resolve, sep } from 'node:path';
+import { dirname, posix, relative, resolve, sep } from 'node:path';
 import Ajv from 'ajv';
 import { ParseError } from '@marcbachmann/cel-js';
 import { YAMLError, parse as parseYaml } from 'yaml';
@@ -12,20 +12,64 @@ import { childNodesOf, nodesOf } from './syntax-tree.js';
 const schema = JSON.parse(readFileSync(new URL('./macros.schema.json', import.meta.url), 'utf-8'));
 const validateSchema = new Ajv({ allErrors: true }).compile(schema);
 
-const noBaseDir = (what) => `imports: a ${what} read from text resolves its imports from a folder; pass { baseDir }`;
+const noSource = (what) => `imports: a ${what} read from text resolves its imports from a folder; pass { baseDir } or { imports }`;
+const NOT_RELATIVE = 'not a file path relative to the text it comes with (imports given as text are)';
+
+// Where imported files come from: a folder on disk, or files given as text (since 0.4), whose paths are relative to
+// the text they come with (a rulebook, or the macro file being checked), named as `givenPath` names them. `resolve`
+// gives a file's identity, or null for a path that can't be one; `read` gives `{ text }` or `{ problem }`; `placeOf`
+// names a file as problems do.
+export function importSource({ baseDir, imports }) {
+  if (imports !== undefined) return givenFiles(imports);
+  return baseDir === undefined ? undefined : diskFiles(baseDir);
+}
+
+const diskFiles = (baseDir) => ({
+  root: baseDir,
+  resolve: (fromDir, path) => resolve(fromDir, path),
+  dirname,
+  placeOf: (file) => relative(baseDir, file).split(sep).join('/'),
+  read: (file) => {
+    try {
+      return { text: readFileSync(file, 'utf-8') };
+    } catch (error) {
+      return { problem: error.code === 'ENOENT' ? 'no such file' : `cannot read (${error.code ?? error.message})` };
+    }
+  },
+});
+
+const givenFiles = (imports) => ({
+  root: '.',
+  resolve: (fromDir, path) => (path.startsWith('/') ? null : givenPath(posix.join(fromDir, path))),
+  dirname: posix.dirname,
+  placeOf: (file) => file,
+  read: (file) => (Object.hasOwn(imports, file) ? { text: imports[file] } : { problem: 'not among the given imports' }),
+});
+
+// A path given as text as a file's identity: `/`-separated and normalized (`./a.yaml` and `x/../a.yaml` are
+// `a.yaml`), without a trailing slash, as `path.resolve` reads one on disk. It may climb above the text's folder
+// (`../shared/a.yaml`), as a file on disk may, so any folder's layout can be given as text. Null for a path that
+// isn't a relative file path: an absolute one, or a folder (`.`, `..`, `../..`). Keys of the map are named the same
+// way (rulebook.js), so an import and its key meet.
+export function givenPath(path) {
+  if (path.startsWith('/')) return null;
+  const normalized = posix.normalize(path).replace(/\/+$/, '');
+  const isFolder = normalized === '' || normalized === '.' || normalized.split('/').every((part) => part === '..');
+  return isFolder ? null : normalized;
+}
 
 // The macros a rulebook can call, and every problem its imports have. Each file is read once,
 // however many files import it. A file sees its own macros and those of the files it imports
 // directly, and so does the rulebook: a name it calls is in a file it names itself.
 // `failure`, when not null, says why a call to a name nothing defines may be to a macro that didn't load.
-export function readImports(imports, baseDir) {
+export function readImports(imports, source) {
   if (imports === undefined) return { visible: new Map(), all: [], errors: [], failure: null };
-  if (baseDir === undefined) return { visible: new Map(), all: [], errors: [noBaseDir('rulebook')], failure: IMPORT_FAILED };
+  if (source === undefined) return { visible: new Map(), all: [], errors: [noSource('rulebook')], failure: IMPORT_FAILED };
   const files = new Map();
   const errors = [];
-  readImportedFiles(imports, baseDir, { files, errors, chain: [] });
+  readImportedFiles(imports, source, { files, errors, chain: [] });
   const read = everyMacroIn(files, errors);
-  return { visible: visibleThrough(imports, baseDir, files), ...read, failure: read.errors.length > 0 ? IMPORT_FAILED : null };
+  return { visible: visibleThrough(imports, source, files), ...read, failure: read.errors.length > 0 ? IMPORT_FAILED : null };
 }
 
 const IMPORT_FAILED = 'an import above has a problem';
@@ -34,19 +78,22 @@ const MACRO_FAILED = 'a macro above has a problem';
 // A macro file given as text, to be checked on its own (since 0.3): `visible` is its own macros, `all`
 // those and its imports'. Its own macros and problems carry no file name (the caller knows the file);
 // `path`, when the caller has one, lets an import that leads back to the file read as a cycle. Without
-// `baseDir`, its imports aren't read, and its own macros are still checked.
-export function readMacroText(text, baseDir, path) {
+// a source of files (`importSource`), its imports aren't read, and its own macros are still checked.
+export function readMacroText(text, source, path) {
   const errors = [];
   const record = parseMacroFile(text, null, errors);
   if (record === null) return { visible: new Map(), all: [], errors, failure: MACRO_FAILED };
   const ownErrorCount = errors.length;
-  const canImport = baseDir !== undefined;
-  if (record.imports.length > 0 && !canImport) errors.push(noBaseDir('macro file'));
+  const canImport = source !== undefined;
+  if (record.imports.length > 0 && !canImport) errors.push(noSource('macro file'));
   const imports = canImport ? record.imports : [];
-  const root = path === undefined ? Symbol('this file') : resolve(path);
-  const files = new Map([[root, { ...record, importedFiles: imports.map((importPath) => resolve(baseDir, importPath)) }]]);
-  readImportedFiles(imports, baseDir, { files, errors, chain: path === undefined ? [] : [root] });
-  visibleThrough([], baseDir, files);
+  // With its path (relative to the source's root; the command passes an absolute one), the file is one of the files:
+  // its imports resolve from its own folder, and an import back to it is a cycle.
+  const root = path === undefined ? Symbol('this file') : source.resolve(source.root, path);
+  const fromDir = path === undefined ? source?.root : source.dirname(root);
+  const files = new Map([[root, { ...record, importedFiles: resolvedFrom(source, fromDir, imports) }]]);
+  readImportedFiles(imports, source, { files, errors, chain: path === undefined ? [] : [root], fromDir });
+  visibleThrough([], source, files);
   const read = everyMacroIn(files, errors);
   const failure = read.errors.length > ownErrorCount ? IMPORT_FAILED : ownErrorCount > 0 ? MACRO_FAILED : null;
   return { visible: record.macros, ...read, failure };
@@ -54,23 +101,31 @@ export function readMacroText(text, baseDir, path) {
 
 // Reads each imported file into `files` (by path), and the files it imports, reporting what can't be read and
 // any cycle in `errors`. `chain` is the files whose imports are being read, outermost first.
-function readImportedFiles(imports, baseDir, { files, errors, chain }) {
-  const placeOf = (path) => relative(baseDir, path).split(sep).join('/');
+function readImportedFiles(imports, source, { files, errors, chain, fromDir }) {
+  if (imports.length === 0) return; // a file given as text without a source imports nothing
+  const { placeOf } = source;
   const visit = (importer, paths, fromDir, chain) => {
     for (const path of paths) {
-      const file = resolve(fromDir, path);
+      const file = source.resolve(fromDir, path);
+      if (file === null) {
+        errors.push(`${importer}"${path}": ${NOT_RELATIVE}`);
+        continue;
+      }
       if (chain.includes(file)) {
         errors.push(`imports form a cycle: ${[...chain.slice(chain.indexOf(file)), file].map(placeOf).join(' -> ')}`);
         continue;
       }
       if (!files.has(file)) {
-        files.set(file, readMacroFile(file, placeOf(file), `${importer}"${path}"`, errors));
-        visit(`${placeOf(file)} imports `, files.get(file)?.imports ?? [], dirname(file), [...chain, file]);
+        files.set(file, readMacroFile(file, source, `${importer}"${path}"`, errors));
+        visit(`${placeOf(file)} imports `, files.get(file)?.imports ?? [], source.dirname(file), [...chain, file]);
       }
     }
   };
-  visit('imports ', imports, baseDir, chain);
+  visit('imports ', imports, fromDir ?? source.root, chain);
 }
+
+// The files `paths` name from `fromDir`, leaving out a path that can't be one (reported where it's read).
+const resolvedFrom = (source, fromDir, paths) => paths.map((path) => source.resolve(fromDir, path)).filter((file) => file !== null);
 
 function everyMacroIn(files, errors) {
   const readFiles = [...files.values()].filter(Boolean);
@@ -79,16 +134,14 @@ function everyMacroIn(files, errors) {
 }
 
 // One macro file, or null when it can't be read or isn't a macro file (its problems are in `errors`).
-function readMacroFile(file, place, importedAs, errors) {
-  let text;
-  try {
-    text = readFileSync(file, 'utf-8');
-  } catch (error) {
-    errors.push(`${importedAs}: ${error.code === 'ENOENT' ? 'no such file' : `cannot read (${error.code ?? error.message})`}`);
+function readMacroFile(file, source, importedAs, errors) {
+  const { text, problem } = source.read(file);
+  if (problem !== undefined) {
+    errors.push(`${importedAs}: ${problem}`);
     return null;
   }
-  const record = parseMacroFile(text, place, errors);
-  return record && { ...record, importedFiles: record.imports.map((path) => resolve(dirname(file), path)) };
+  const record = parseMacroFile(text, source.placeOf(file), errors);
+  return record && { ...record, importedFiles: resolvedFrom(source, source.dirname(file), record.imports) };
 }
 
 // A macro file's text, read and checked against its schema; its problems are prefixed with `place`, unless
@@ -472,12 +525,12 @@ export function macroSite(source, { parse, scope, macroCheck }) {
 
 // What the rulebook can call: the macros of the files it imports directly. Each macro carries
 // what its own body can call: its file's macros and those of the files that file imports.
-function visibleThrough(imports, baseDir, files) {
+function visibleThrough(imports, source, files) {
   const macrosOf = (paths) => new Map(paths.flatMap((file) => [...(files.get(file)?.macros.values() ?? [])].map((macro) => [macro.name, macro])));
   for (const record of files.values()) {
     if (!record) continue;
     const scope = new Map([...macrosOf(record.importedFiles), ...record.macros]);
     for (const macro of record.macros.values()) macro.scope = scope;
   }
-  return macrosOf(imports.map((path) => resolve(baseDir, path)));
+  return imports.length === 0 ? new Map() : macrosOf(resolvedFrom(source, source.root, imports));
 }

@@ -53,7 +53,7 @@ describe('a rulebook imports macro files', () => {
 
   test('text with imports and no baseDir says what to pass', () => {
     expect(Rulebook.check(rulebookImporting('./common.macros.yaml'), registry())).toEqual([
-      'imports: a rulebook read from text resolves its imports from a folder; pass { baseDir }',
+      'imports: a rulebook read from text resolves its imports from a folder; pass { baseDir } or { imports }',
     ]);
   });
 
@@ -127,7 +127,7 @@ describe('a rulebook imports macro files', () => {
     const text = rulebookImporting('./a.macros.yaml');
 
     expect(() => Rulebook.fromText(text, registry(), { basedir: '.' }))
-      .toThrow(new TypeError('Rulebook.fromText: unknown option "basedir" (options: baseDir)'));
+      .toThrow(new TypeError('Rulebook.fromText: unknown option "basedir" (options: baseDir, imports)'));
     expect(() => Rulebook.check(text, registry(), { baseDir: 3 }))
       .toThrow(new TypeError('Rulebook.check: baseDir must be a string'));
     expect(() => Rulebook.check(text, registry(), 'rules'))

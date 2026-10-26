@@ -9,6 +9,90 @@ first. [CHANGELOG.md](../CHANGELOG.md) lists every change; this page covers the 
 rulebook that worked before. Each example runs on the current version, so a message a later release reworded shows
 its new wording, in the older sections too.
 
+## From 0.3 to 0.4
+
+Upgrade the packages together, as for 0.3: `@belaykit/rulebook` 0.4 takes `@belaykit/core` 0.4 as its peer.
+
+```bash
+npm install @belaykit/core@^0.4.0 @belaykit/rulebook@^0.4.0
+npm install belaykit@^0.4.0 @belaykit/rulebook@^0.4.0     # if you use the core as belaykit
+```
+
+A rulebook that worked with 0.3 loads unchanged. What changed is what `rulebook.decide` returns, which matters to code
+that reads a decision, and in what a test or a type might compare:
+
+| Change | What you see | What to do |
+| --- | --- | --- |
+| Outputs are copies | changing `decision.outputs.x` no longer changes the working set's `x` | read the result from the decision |
+| A value that can't be copied fails the decision | an output holding a class instance (anywhere inside it, built-ins such as `Error`, `URL` and `Buffer` included), a function or a symbol, which 0.3 returned, now makes the decision `failed`: `decide: output "x" can't be copied (…)` | keep outputs to plain data: objects, lists, strings, numbers (`BigInt` included), booleans, `null`, `Map`, `Set`, `Date`, `RegExp`, `ArrayBuffer`, typed arrays; keep a class's behavior in code |
+| A copy leaves some keys out | a symbol key, a key that isn't enumerable, or a built-in's own key (a `Map`'s, `Set`'s, `Date`'s, `RegExp`'s, a buffer's), which 0.3 returned with the value, is missing from the copy, and a `RegExp`'s `lastIndex` comes back 0 | keep it as a plain key; or pass `decide(initial, { onCopyLoss: 'fail' })` to have such a loss fail the decision, naming it |
+| An output no rule decided fails the decision | an output written by something other than a rule's action (a producer writing into `ws` beyond the key it gathers, say), which 0.3 accepted, now makes the decision `failed`: `decide: output "x" wasn't set by a rule's action (…)`; on a `no_match` run with such an output present too | have a rule's action write it |
+| A value CEL can't read is named | a run that failed with `Unsupported type: Site` now says `ws.site is an instance of Site, which CEL can't read (…)` | update a test that matches the old text |
+| A failing `selectFirst` list is named, in one line | a run whose `selectFirst` expression failed, which 0.3 reported with cel-js's message and its source excerpt, now says `criteria failed: selectFirst: No such key: items` | update a test that matches the old text |
+| Every decision has `evidence`, and a completed one `decidedBy` | a test comparing a whole decision with `toEqual` or `deepStrictEqual` sees the new keys | compare the keys you mean (`decision.outputs`), or add the new ones |
+| The TypeScript `Decision` type has them too | a hand-built `Decision` (in a test, a fixture or a stub) no longer type-checks without `evidence`, and a completed one without `decidedBy` | add `evidence: {}` and `decidedBy: {}` |
+| `RulebookTextOptions` is a type, not an interface | an `interface X extends RulebookTextOptions` no longer compiles | use `type X = RulebookTextOptions & { … }` |
+| The no-folder problem and the option list name `imports` | `…; pass { baseDir }` reads `…; pass { baseDir } or { imports }`, and `(options: baseDir)` reads `(options: baseDir, imports)` (for `checkMacros`, `(options: baseDir, imports, path)`) | update a test that matches the old text |
+
+The first three, and the `selectFirst` message, as 0.4 reports them:
+
+```js run
+import { Rulebook } from '@belaykit/rulebook';
+
+const tag = Symbol('tag');
+const registry = {
+  producers: {},
+  actions: {
+    settle: { writes: ['routing'], run: async (ws, { deps }) => { ws.routing = { route: 'hold' }; deps.seen = ws; } },
+    settle_with_code: { writes: ['routing'], run: async (ws) => { ws.routing = { route: 'hold', explain: () => 'held' }; } },
+    settle_with_tag: { writes: ['routing'], run: async (ws) => { ws.routing = { route: 'hold', [tag]: 'internal' }; } },
+  },
+  initialKeys: ['items'],
+};
+const rulebook = (action) => `
+version: 1
+outputs: [routing]
+sections:
+  - name: decide
+    when: '!has(ws.routing)'
+    rules:
+      - when: "true"
+        then: { action: ${action} }
+`;
+const decideWith = (action, options) => Rulebook.fromText(rulebook(action), registry).decide({}, options);
+
+const deps = {};
+const decision = await decideWith('settle', { deps });
+console.log(decision.outputs.routing, 'is the working set\'s:', decision.outputs.routing === deps.seen.routing);
+console.log((await decideWith('settle_with_code')).error);
+console.log((await decideWith('settle_with_tag')).outputs.routing);
+console.log((await decideWith('settle_with_tag', { onCopyLoss: 'fail' })).error);
+
+const selecting = Rulebook.fromText(`
+version: 1
+outputs: [routing]
+sections:
+  - name: decide
+    when: '!has(ws.routing)'
+    exhaustive: false
+    rules:
+      - selectFirst: { item: ws.items }
+        when: item == "x"
+        then: { action: settle }
+`, registry);
+console.log((await selecting.decide({})).error);
+```
+
+```text output
+{ route: 'hold' } is the working set's: false
+decide: output "routing" can't be copied (() => 'held' could not be cloned.)
+{ route: 'hold' }
+decide: output "routing" can't be copied (routing has a symbol key, Symbol(tag), which a copy leaves out)
+decide/decide#1 criteria failed: selectFirst: No such key: items
+```
+
+What's new is `decidedBy` and `evidence`; see [Deciding with a rulebook](rulebooks.md#deciding-with-a-rulebook).
+
 ## From 0.2 to 0.3
 
 Upgrade the packages together: `@belaykit/rulebook` 0.3 takes `@belaykit/core` 0.3 as its peer. A range written for
@@ -58,7 +142,7 @@ console.log(Rulebook.check(rulebook, registry).join('\n'));
 
 ```text output
 TypeError: Rulebook.check: options must be an object, such as { baseDir }
-TypeError: Rulebook.check: unknown option "basedir" (options: baseDir)
+TypeError: Rulebook.check: unknown option "basedir" (options: baseDir, imports)
 section "decide" when: CEL macro variable "belaykit" is reserved for BelayKit's helpers
 ```
 

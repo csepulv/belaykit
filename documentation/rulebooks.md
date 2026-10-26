@@ -43,6 +43,7 @@ sections:
 | `imports` | top | Optional. Macro files whose macros this rulebook calls, relative to it; one or more, no path twice. See [Macros](#macros). |
 | `hitPolicyDefault` | top | `FIRST` or `ALL`, for sections that don't set `hitPolicy`. Default `FIRST`. |
 | `outputs` | top | Optional. The working-set keys `rules.decide` returns. See [below](#deciding-with-a-rulebook). |
+| `evidence` | top | Optional, with `outputs`. Other working-set keys every decision shows, as the run left them. See [below](#deciding-with-a-rulebook). |
 | `sections` | top | The sections, in order. |
 | `name` | section | Names the iteration in the trace. |
 | `when` | section | CEL: when this section applies. |
@@ -317,7 +318,8 @@ isConfirmed(ws.facts)
 - **Where imports resolve from.** A path in `imports:` is relative to the file that has it. `Rulebook.load` and the
   `belaykit-rulebook` command use the rulebook's own folder; a rulebook given as text has none, so
   `Rulebook.fromText` and `Rulebook.check` take it as `{ baseDir }` ([below](#loading-and-checking)). A relative
-  `baseDir` is resolved from the current directory (`process.cwd()`).
+  `baseDir` is resolved from the current directory (`process.cwd()`). Without a disk, the files can be given as text
+  (below the list).
 - **Which macros a rulebook can call:** those of the files it imports itself. A macro's body can call the macros of
   its own file and of the files that file imports. So every name a rulebook calls is in a file it names.
 - **Where a macro can be called:** anywhere a rulebook has CEL: a section's or a rule's `when`, a `selectFirst` list,
@@ -339,6 +341,42 @@ isConfirmed(ws.facts)
   placeholder's shows the placeholder as written, call included.
 - **The catch-all.** A `FIRST` section's last rule may call a macro whose body is `true`: the expansion is what
   [When no rule holds](#when-no-rule-holds) reads.
+
+**Without a disk.** A bundle can hold its macro files as text and pass them as `{ imports }`, by the paths the rulebook imports them by
+(since 0.4). Paths resolve as they would in a folder, from the rulebook and then from each file, climbing above it too
+(`../shared/common.macros.yaml`), so any folder's layout can be given as text. An import the map doesn't hold is a
+problem, and so is an absolute path. One source of files at a time: `baseDir` or `imports`.
+
+```js run
+import { Rulebook } from '@belaykit/rulebook';
+
+const registry = { producers: {}, actions: { settle: { writes: ['routing'], run: async (ws) => { ws.routing = 'escalate'; } } }, initialKeys: ['item'] };
+const imports = {
+  'macros/triage.macros.yaml': 'version: 1\nimports: [./words.macros.yaml]\nmacros:\n  isUrgent: { body: "hasWord(\\"outage\\")" }\n',
+  'macros/words.macros.yaml': 'version: 1\nmacros:\n  hasWord: { params: [word], body: "ws.item.contains(word)" }\n',
+};
+const rulebook = `
+version: 1
+outputs: [routing]
+imports: [./macros/triage.macros.yaml]
+sections:
+  - name: decide
+    when: '!has(ws.routing) && isUrgent()'
+    exhaustive: false
+    rules:
+      - when: "true"
+        then: { action: settle }
+`;
+console.log((await Rulebook.fromText(rulebook, registry, { imports }).decide({ item: 'database outage' })).outputs);
+const { 'macros/words.macros.yaml': _words, ...missing } = imports;
+console.log(Rulebook.check(rulebook, registry, { imports: missing }).join('\n'));
+```
+
+```text output
+{ routing: 'escalate' }
+macros/triage.macros.yaml imports "./words.macros.yaml": not among the given imports
+unknown function "hasWord", used in 1 expression (an import above has a problem)
+```
 
 **Where a problem is reported.** A problem a macro's body has on its own, whoever calls it, is reported once, on the
 macro (`macro "x" (<file>): …`). One that depends on what a call passes, such as a field read through a param, is
@@ -390,7 +428,10 @@ macro "isOpen" (common.macros.yaml): unknown ws field "routng"
 ```
 
 **Checking a macro file.** A macro file can be checked on its own, against a registry, before any rulebook calls its
-macros: `Rulebook.checkMacros(text, registry, { baseDir })`, or the `belaykit-rulebook check` command, which takes
+macros: `Rulebook.checkMacros(text, registry, { baseDir })` (or `{ imports }`, paths relative to the macro file; and
+with either, `path`, where the file itself sits, so its imports resolve from its folder and an import that leads back
+to it reads as a cycle), or the
+`belaykit-rulebook check` command, which takes
 macro files beside rulebooks ([below](#loading-and-checking)). Every macro in the file is checked as a call would check
 it. A macro file has no `needs`, so it knows the keys the registry names: `initialKeys`, any `writes`, and the keys of
 `shapes`. A field read through a param is still checked only at a call, since the param can be anything:
@@ -748,8 +789,9 @@ section "decide": its last rule's action "escalate" has a guard, so the rule may
 `Rulebook.load(path, registry)` and `Rulebook.fromText(text, registry)` check everything above and throw listing every
 problem, not just the first, each naming its section and rule (rules count from 1). `Rulebook.check(text, registry)`
 returns the same problems as a list (`[]` when the text is clean) and never throws for a problem in the text. A
-rulebook with [macros](#macros) given as text needs a folder for its imports: `Rulebook.fromText(text, registry,
-{ baseDir })` and `Rulebook.check(text, registry, { baseDir })`.
+rulebook with [macros](#macros) given as text needs a source for its imports: a folder, as
+`Rulebook.fromText(text, registry, { baseDir })` and `Rulebook.check(text, registry, { baseDir })`, or the macro files
+themselves as text, `{ imports }` (since 0.4).
 
 ```js run
 import { Rulebook } from '@belaykit/rulebook';
@@ -860,7 +902,7 @@ copies). Only `Rulebook.load` and `Rulebook.fromText` make a rulebook, so every 
 ## Deciding with a rulebook
 
 A rulebook can also be a decision function on its own. It declares its **outputs**, the keys it decides, and
-`rules.decide(initial, { deps, maxIterations })` runs it until every output is present:
+`rules.decide(initial, { deps, maxIterations, onCopyLoss })` runs it until every output is present:
 
 ```js run
 import { Rulebook } from '@belaykit/rulebook';
@@ -896,25 +938,109 @@ const deps = { classify: async (item) => ({ urgent: item.includes('outage') }) }
 for (const item of ['database outage', 'new laptop', '']) {
   const decision = await rules.decide({ item }, { deps });
   console.log(decision.status, decision.outputs ?? decision.error);
+  if (decision.status === 'completed') console.log('  routing decided by', decision.decidedBy.routing);
 }
 ```
 
 ```text output
 completed { routing: 'escalate', reason: 'urgent' }
+  routing decided by { section: 'decide', rule: 'decide#1', iteration: 2 }
 completed { routing: 'hold', reason: 'ordinary' }
+  routing decided by { section: 'decide', rule: 'decide#2', iteration: 2 }
 no_match decide: no section decided; unset outputs: routing, reason; sections: gather (when false), decide (when false)
 ```
 
-`decide` always resolves, as a run does: `completed` with `outputs`, the outputs' values; `no_match` when nothing
+`decide` always resolves, as a run does: `completed` with `outputs`, the outputs' values, and `decidedBy`, which says
+for each output the section, the rule (its `id`, or `<section>#<n>` as the trace names it) and the iteration of the
+last rule whose action gave it a new value; `no_match` when nothing
 applied (no section claimed the working set, or one claimed and no rule held), its `error` naming the unset outputs
 and the sections as they were asked: those before the one that claimed (`when false`), that one (`no rule held`, or
 `nothing left to gather` for a gather-only section), and the rest (`not reached`); `failed` when something broke, with
-the run's own message. Each comes with the `trace`; when no section claims, its last entry is a set named `no
-section`. When the rulebook loads, every output must be written by some action's `writes`, and none may be set by
-gathering (a `needs` key, or in a producer's `writes`). An initial working set that already holds an output, or a
-`needs` key, fails the run, naming it. `decide` rejects with a `TypeError` for a rulebook without `outputs`, an option
-it doesn't take, or an option's bad value (`maxIterations: 0`). A fixture runs the rulebook as a provider instead, so
-where `decide` says `no_match` for "no section claimed", `runFixture` says `failed`, as an agent's run would.
+the run's own message, then `decide`'s own problems (an output no rule decided, a value that can't be copied), joined
+by `; `. Each comes with the `trace`; when no section claims, its last entry is a set named `no section`. When the
+rulebook loads, every output must be written by some action's `writes`, and none may be set by gathering (a `needs`
+key, or in a producer's `writes`). An initial working set that already holds an output, or a `needs` key, fails the
+run, naming it.
+
+In `decidedBy`, a new value is one that isn't the same as before (by
+`Object.is`): an action that replaces an output's value takes the credit, and one that writes the value the output
+already holds (the same string, say), or changes something inside it (a `push` into a list it holds), doesn't. In an
+`ALL` section, where several rules can write one output in an iteration, the last one to give it a new value is
+named. Only a rule's action decides: an output something else wrote (a producer beyond the key it gathers, or a
+registered function that writes `ws`), on a completed or a `no_match` run, makes the decision `failed`, naming the
+output, since no rule decided it.
+
+A decision can also show the facts around it. A rulebook with `outputs` may list **evidence**, other working-set
+keys, and every decision, `failed` and `no_match` included, returns them in `evidence`: the ones present when the run
+ended, a producer's `null` ("looked, found nothing") included, a key never gathered left out. That's what was in
+the working set, not what the deciding rule read: a key gathered on the way can be there though no rule that decided
+used it, so read it beside `decidedBy`. Each evidence key must be one the rulebook or registry declares (a `needs` key,
+`initialKeys`, or a producer's or action's `writes`), and not an output. Outputs and evidence are copies, made with
+`structuredClone`, so a caller changing them doesn't change what the run saw. They must be plain data: objects, lists,
+strings, numbers (`BigInt` included), booleans, `null`, `Map`, `Set`, `Date`, `RegExp`, `ArrayBuffer`, typed arrays.
+A value that can't be copied makes the decision `failed`, naming where it is: a class instance anywhere inside it,
+built-ins such as `Error`, `URL` and `Buffer` included, since a copy would drop its class, private fields and getters
+(a `Buffer` would come back as a plain `Uint8Array`); a function; a symbol; or a getter that throws. An evidence key
+that can't be copied is left out of `evidence`, as `broken` and `legacy` show below. Some keys a copy leaves out
+without an error: a symbol key, a key that isn't enumerable, and a built-in's own keys (a `Map`'s, `Set`'s, `Date`'s,
+`RegExp`'s, a buffer's). A list's extra keys are kept. A `RegExp`'s `lastIndex` is kept but comes back 0. By default
+these are let go; with `onCopyLoss: 'fail'`, such a key, or a non-zero `lastIndex`, fails the decision, naming where
+it is (`routing has a symbol key, Symbol(tag), which a copy leaves out`). CEL reads plain data too: a
+class instance an expression reaches fails the run, and its message names where values of that type are in `ws`:
+
+```js run
+import { Rulebook } from '@belaykit/rulebook';
+
+const registry = {
+  producers: {
+    load_site: { writes: ['site'], run: async (ws, deps) => deps.sites[ws.item] ?? null },
+  },
+  actions: {
+    settle: {
+      writes: ['routing'],
+      params: { type: 'object', properties: { routing: { type: 'string' } }, additionalProperties: false },
+      run: async (ws, { params }) => { ws.routing = params.routing; },
+    },
+  },
+  initialKeys: ['item'],
+};
+const rules = Rulebook.fromText(`
+version: 1
+outputs: [routing]
+evidence: [site]
+sections:
+  - name: decide
+    when: '!has(ws.routing)'
+    needs: { site: load_site }
+    rules:
+      - id: managed
+        when: ws.site != null && ws.site.managed == true
+        then: { action: settle, routing: managed }
+      - id: unmanaged
+        when: "true"
+        then: { action: settle, routing: default }
+`, registry);
+class Site { constructor() { this.managed = true; } }
+const sites = { hq: { managed: true }, broken: { managed: false, describe() {} }, legacy: new Site() };
+
+for (const item of ['hq', 'branch', 'broken', 'legacy']) {
+  const decision = await rules.decide({ item }, { deps: { sites } });
+  console.log(item, decision.status, decision.outputs ?? decision.error, decision.evidence);
+}
+```
+
+```text output
+hq completed { routing: 'managed' } { site: { managed: true } }
+branch completed { routing: 'default' } { site: null }
+broken failed decide: evidence "site" can't be copied (describe() {} could not be cloned.) {}
+legacy failed decide/managed criteria failed: ws.site is an instance of Site, which CEL can't read (keep the working set to plain data: objects, lists, strings, numbers, booleans, null, Map, Set, Date); decide: evidence "site" can't be copied (site is an instance of Site; a copy would drop its class, private fields and getters) {}
+```
+
+`decide` rejects with a `TypeError` for a rulebook without `outputs`, an option
+it doesn't take, or an option's bad value (`maxIterations: 0`, `onCopyLoss: 'strict'`). A fixture runs the rulebook as a provider instead, so
+where `decide` says `no_match` for "no section claimed", `runFixture` says `failed`, as an agent's run would. The
+other way round, `decide` says `failed` where an output something other than a rule wrote (a registered function, say)
+is present, and a fixture reports the run's own status, such as `no_match`; it has no outputs to check.
 
 ## Fixtures
 
@@ -976,12 +1102,13 @@ completed []
 ## Errors at run time
 
 A run that a rulebook drives fails, naming its place, when a section's `when` or a rule's `when` isn't a boolean (or
-fails), when an action's [guard](#guarded-actions) isn't a boolean (or fails), when a `selectFirst` expression isn't a list, when a `selectFirst` rule's `when` fails for one item (counted
+fails), when an action's [guard](#guarded-actions) isn't a boolean (or fails), when a `selectFirst` expression isn't a list (or fails), when a `selectFirst` rule's `when` fails for one item (counted
 from 0, like `selected.index`), when an action throws (or calls `regather` with an undeclared key), and when a
 producer throws. In that order (three more are shown where their features are: a producer that returns `undefined`,
 [in The working set](#the-working-set-and-needs-keys); a placeholder whose value can't become text, in
 [Templated params](#templated-params); and a guard that stops holding before its action runs, in
-[Guarded actions](#guarded-actions)):
+[Guarded actions](#guarded-actions)). An expression that reaches a value CEL can't read, such as a class instance,
+fails too, naming where it is in `ws` ([Deciding with a rulebook](#deciding-with-a-rulebook) shows one):
 
 ```js run
 import { Agent } from '@belaykit/core';
@@ -1012,6 +1139,7 @@ console.log(await failureOf(decide('      - when: "true"\n        then: { action
 console.log(await failureOf(decide('      - id: urgent\n        when: ws.flag\n        then: { action: probe }\n')));
 console.log(await failureOf(decide('      - id: urgent\n        when: "true"\n        then: { action: guarded }\n')));
 console.log(await failureOf(decide('      - id: probe_unknown\n        selectFirst: { node: ws.flag }\n        when: node == "x"\n        then: { action: probe }\n')));
+console.log(await failureOf(decide('      - id: probe_unknown\n        selectFirst: { node: "ws.nodes.map(n, n.statsu)" }\n        when: node == "open"\n        then: { action: probe }\n')));
 console.log(await failureOf(decide('      - id: probe_unknown\n        selectFirst: { node: ws.nodes }\n        when: node.statsu == "open"\n        then: { action: probe }\n')));
 console.log(await failureOf(decide('      - id: urgent\n        when: "true"\n        then: { action: settle }\n')));
 console.log(await failureOf(`  - name: gather\n    when: '!has(ws.classification)'\n    needs: { classification: classify_item }\n`));
@@ -1022,6 +1150,7 @@ iteration 1 choiceProvider failed: section "decide" when failed: when evaluated 
 decide/urgent criteria failed: when evaluated to string, expected a boolean
 decide/urgent criteria failed: action "guarded" guard: evaluated to string, expected a boolean
 decide/probe_unknown criteria failed: selectFirst evaluated to string, expected a list
+decide/probe_unknown criteria failed: selectFirst: No such key: statsu
 decide/probe_unknown criteria failed: node = item 0: No such key: statsu
 decide/urgent action failed: store unavailable
 gather/gather classification action failed: model unavailable

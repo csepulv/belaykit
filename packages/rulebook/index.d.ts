@@ -176,24 +176,61 @@ export interface FixtureRun {
 }
 
 /**
+ * The rule that decided an output (since 0.4): the last rule whose action gave it a new value (by
+ * `Object.is`). A change inside the output's own value, such as a push into a list it holds, isn't a new value.
+ */
+export interface DecidedBy {
+  /** The section's `name`. */
+  section: string;
+  /** The rule's `id`, or `<section>#<n>` for a rule without one: its choice's name in the trace. */
+  rule: string;
+  /** The iteration its action ran in, as the trace numbers them. */
+  iteration: number;
+}
+
+/**
  * What `rulebook.decide` resolves to (since 0.2). `completed`: every declared output is present,
- * with its value in `outputs`. `no_match`: nothing applied (no section claimed the working set, or one
- * claimed and no rule held); `error` names the unset outputs and the sections as the provider asked
- * them (those before the one that claimed, that one, the rest not reached). `failed`:
- * something broke; `error` is the core's message.
+ * with its value in `outputs`, and the rule that decided it in `decidedBy` (since 0.4); an output no rule's action
+ * set (something else wrote it, such as a producer beyond the key it gathers) fails the decision instead. Every decision has `evidence` (since
+ * 0.4): the rulebook's `evidence:` keys present when the run ended, `null` included, absent ones left out; `{}` when
+ * the rulebook declares none or the initializer failed. Outputs and evidence are copies (`structuredClone`) of plain
+ * data; a value that can't be copied fails the decision, naming where it is: a class instance anywhere inside it,
+ * built-ins such as `Error`, `URL` and `Buffer` included (a copy would drop its class), a function, a symbol, a
+ * getter that throws. An evidence key that can't be copied is left out of `evidence`. What a copy loses without an
+ * error (a symbol key, a key that isn't enumerable, an own key on a `Map`, `Set`, `Date`, `RegExp` or buffer, a
+ * `RegExp`'s non-zero `lastIndex`, which a copy resets to 0) is let go, or with `onCopyLoss: 'fail'` fails the
+ * decision too. The run's own message, if it had one, comes first. `no_match`:
+ * nothing applied (no section claimed the working set, or one claimed and no rule held); `error` names the unset
+ * outputs and the sections as the provider asked them (those before the one that claimed, that one, the rest not
+ * reached). `failed`: something broke; `error` is the run's own message, then `decide`'s own problems (an output no
+ * rule decided, a value that can't be copied), joined by `; `.
  */
 export type Decision =
-  | { status: 'completed'; outputs: Record<string, unknown>; trace: TraceEntry[] }
-  | { status: 'no_match' | 'failed'; error: string; trace: TraceEntry[] };
+  | { status: 'completed'; outputs: Record<string, unknown>; decidedBy: Record<string, DecidedBy>; evidence: Record<string, unknown>; trace: TraceEntry[] }
+  | { status: 'no_match' | 'failed'; error: string; evidence: Record<string, unknown>; trace: TraceEntry[] };
 
-/** How a rulebook given as text is read (since 0.3). */
-export interface RulebookTextOptions {
-  /**
-   * The folder the rulebook's `imports` resolve from, as a file's own folder would be. Text with
-   * `imports` and no `baseDir` is a load problem.
-   */
-  baseDir?: string;
-}
+/**
+ * How a rulebook given as text is read (since 0.3): its imports come from a folder (`baseDir`) or are given as text
+ * (`imports`, since 0.4), not both (a `TypeError`). Text with `imports:` and neither is a load problem.
+ */
+export type RulebookTextOptions =
+  | {
+    /** The folder the rulebook's `imports` resolve from, as a file's own folder would be. */
+    baseDir?: string;
+    imports?: never;
+  }
+  | {
+    baseDir?: never;
+    /**
+     * The macro files as text, by path (since 0.4), so nothing is read from disk. Paths are relative to the text they
+     * come with (the rulebook, or for `checkMacros` the macro file), as its `imports:` writes them, and a file's own
+     * imports resolve relative to it; `./a.yaml`, `x/../a.yaml` and `a.yaml/` are one file, and a path may climb
+     * above it (`../shared/a.yaml`), as on disk. A path the map doesn't hold is a load problem, and so is an absolute
+     * one. A plain object only (a `Map` is refused); an absolute key or one naming a folder (`.`, `..`), two keys
+     * naming one file, or a value that isn't a string is a `TypeError`.
+     */
+    imports: Record<string, string>;
+  };
 
 /** A rulebook loaded and checked against a registry, which it keeps (a copy of its producers and actions). */
 export class Rulebook {
@@ -219,7 +256,9 @@ export class Rulebook {
    * its rule; a `FIRST` section with rules that neither ends in a rule with `when: "true"` (without
    * `selectFirst`) nor says `exhaustive: false` (a rule whose action has a `guard` isn't that catch-all), and
    * `exhaustive` where it means nothing; `outputs`
-   * that no action writes or that gathering would set (a `needs` key, a producer's `writes`); the
+   * that no action writes or that gathering would set (a `needs` key, a producer's `writes`); `evidence` (since
+   * 0.4) without `outputs`, or naming an output or a key nothing declares (a `needs` key, `initialKeys`, a
+   * producer's or action's `writes`); the
    * `guard` of each action a rule names, checked like a `when` and reported once per action.
    * Registry problems (an unknown key in the registry or on a producer or action, a
    * function that won't register, a `params` or shape schema that won't compile, `templates` that
@@ -246,8 +285,9 @@ export class Rulebook {
    */
   static load(path: string, registry: Registry<any>): Rulebook;
   /**
-   * The same, from text; imports resolve from `options.baseDir`. A `TypeError` when `text` isn't a
-   * string, for an option it doesn't take, or when `baseDir` isn't a string.
+   * The same, from text; imports resolve from `options.baseDir`, or come as text in `options.imports` (since 0.4).
+   * A `TypeError` when `text` isn't a string, for an option it doesn't take, when `baseDir` isn't a string, for
+   * both options at once, or for an `imports` map `RulebookTextOptions` refuses.
    */
   static fromText(text: string, registry: Registry<any>, options?: RulebookTextOptions): Rulebook;
   /**
@@ -263,12 +303,17 @@ export class Rulebook {
    * calls, cycles, its body against the registry's functions, and the keys it reads against those the
    * registry names (`initialKeys`, any `writes`, the keys of `shapes`: a file has no `needs`) and their shapes.
    * A param stands for any value, so fields read through one are checked where the macro is called. Without
-   * `options.baseDir` its imports are a problem and aren't read; its own macros are still checked.
-   * Imports resolve from `options.baseDir`, and an imported file's macros are checked as far as this
-   * file's call them. The file's own problems carry no file name (`macro "x": …`); the registry's own
-   * problems are listed too. Given a rulebook, it says so, and to use `check`. Throws as `check` does.
+   * `options.baseDir` or `options.imports` its imports are a problem and aren't read; its own macros are still
+   * checked. Imports resolve from `options.baseDir`, or come from `options.imports` (paths relative to this file,
+   * since 0.4), and an imported file's macros are checked as far as this
+   * file's call them. `options.path` (since 0.4) says where this file sits, relative to `baseDir` or to the
+   * imports' paths: its imports then resolve from its own folder, and an import that leads back to it is a cycle
+   * (without it, the file is read again and its macros are "defined in both"); a `TypeError` without `baseDir` or
+   * `imports`, for a path that isn't a file's, or for one whose `imports` entry holds other text. The file's own
+   * problems carry no file name (`macro "x": …`); the registry's own problems are listed too. Given a rulebook, it
+   * says so, and to use `check`. Throws as `check` does.
    */
-  static checkMacros(text: string, registry: Registry<any>, options?: RulebookTextOptions): string[];
+  static checkMacros(text: string, registry: Registry<any>, options?: RulebookTextOptions & { path?: string }): string[];
 
   /** The sections as loaded (a copy). */
   readonly sections: Section[];
@@ -327,11 +372,13 @@ export class Rulebook {
    * The rulebook as a decision function: a run on the core's `Agent`, from `initialize(initial)`,
    * until every output the rulebook declares (`outputs:`) is present. Always resolves; an output
    * or `needs` key already present in `initial` fails the run, naming it. `deps` reach producers
-   * and actions; `maxIterations` bounds the run (default 25). The trace is the default one.
+   * and actions; `maxIterations` bounds the run (default 25). `onCopyLoss` (since 0.4) says what happens to a key
+   * a copy of an output or evidence value leaves out without an error: `'drop'` (the default) leaves it out,
+   * `'fail'` fails the decision, naming it. The trace is the default one.
    * Rejects with a `TypeError` when the rulebook declares no outputs, for an option it doesn't take, or for
-   * an option's bad value (`maxIterations: 0`).
+   * an option's bad value (`maxIterations: 0`, `onCopyLoss: 'strict'`).
    */
-  decide(initial?: Record<string, unknown>, options?: { deps?: unknown; maxIterations?: number }): Promise<Decision>;
+  decide(initial?: Record<string, unknown>, options?: { deps?: unknown; maxIterations?: number; onCopyLoss?: 'drop' | 'fail' }): Promise<Decision>;
 }
 
 /**

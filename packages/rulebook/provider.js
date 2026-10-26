@@ -8,7 +8,36 @@
 // BelayKit assumes no terminal field: an agent initializes whatever it finishes on, like any
 // other key.
 import { always } from '@belaykit/core';
+import { kindOfValue, matchesIn } from './plain-data.js';
 import { parseTemplate } from './templates.js';
+
+const UNREADABLE = 'which CEL can\'t read (keep the working set to plain data: objects, lists, strings, numbers, booleans, null, Map, Set, Date)';
+const SHOWN = 3;
+
+// cel-js's message, first line only (it adds an excerpt of the source after it). For a value it can't read, cel-js
+// names only its type ("Unsupported type: Clients"), so the message says where values of that type are (since 0.4):
+// every one, since which one CEL reached isn't known; a binding (a selected item) first, since the rule reads it.
+// cel-js says `object` for a map whose own `constructor` key isn't a class, which names no type to look for.
+function celMessage(error, variables) {
+  const message = error.message.split('\n')[0];
+  if (error.code !== 'unsupported_type') return message;
+  const type = message.slice(message.indexOf(': ') + 2);
+  if (type === 'object') return message;
+  const isUnreadable = (value) => (value !== null && typeof value === 'object' ? value.constructor?.name === type : typeof value === type);
+  const names = [...Object.keys(variables).filter((name) => name !== 'ws'), 'ws'];
+  let found;
+  try {
+    found = names.flatMap((name) => matchesIn(variables[name], name, isUnreadable, SHOWN + 1));
+  } catch {
+    return message; // a getter in ws threw while looking; cel-js's own message still says what failed
+  }
+  const distinct = found.filter((match, index) => found.findIndex(({ value }) => value === match.value) === index);
+  if (distinct.length === 0) return message;
+  const [first] = distinct;
+  if (distinct.length === 1) return `${first.path} is ${kindOfValue(first.value)}, ${UNREADABLE}`;
+  const paths = distinct.slice(0, SHOWN).map(({ path }) => path).join(', ') + (distinct.length > SHOWN ? ', …' : '');
+  return `${paths} are each ${kindOfValue(first.value)} (CEL reached one of them), ${UNREADABLE}`;
+}
 
 // Present as cel-js's has() reads it: an own key, not holding undefined. The one test of "gathered".
 export const isPresent = (ws, key) => Object.hasOwn(ws, key) && ws[key] !== undefined;
@@ -20,15 +49,18 @@ export function initialWorkingSet(loaded, initial = {}) {
   return { ...initial };
 }
 
-export function rulebookProvider(loaded, registry, deps = {}) {
+// `aroundRuleAction(rule, ws, run)` wraps each rule's action, for `decide` (decide.js); `rule` is
+// `{ section, rule }` as the trace names them. Gathering isn't a rule, so it isn't wrapped.
+// `onClaim(section)` hears which section claimed each iteration (null for none), so `decide` can say so without
+// evaluating a `when` again after the run.
+export function rulebookProvider(loaded, registry, deps = {}, { aroundRuleAction = (_rule, _ws, run) => run(), onClaim = () => {} } = {}) {
   // A non-boolean result is an authoring error, never a "no match": it fails the run.
-  // cel-js's message adds an excerpt of the source after its first line; the run's message keeps the first.
   const holds = (expression, variables, environment = loaded.env) => {
     let result;
     try {
       result = environment.evaluate(expression, variables);
     } catch (error) {
-      throw new Error(error.message.split('\n')[0], { cause: error });
+      throw new Error(celMessage(error, variables), { cause: error });
     }
     if (typeof result !== 'boolean') throw new TypeError(`when evaluated to ${celTypeOf(result)}, expected a boolean`);
     return result;
@@ -42,6 +74,7 @@ export function rulebookProvider(loaded, registry, deps = {}) {
 
   return async (ws) => {
     const section = loaded.sections.find((candidate) => holdsIn(candidate, ws, holds));
+    onClaim(section ?? null);
     if (!section) return null;
 
     const missing = Object.entries(section.needs).filter(([key]) => !isPresent(ws, key));
@@ -59,11 +92,11 @@ export function rulebookProvider(loaded, registry, deps = {}) {
         criteria: async (current) => matchRule(rule, current),
         actions: [async (current, match) => {
           assertGuardStillHolds(rule.action, loaded.guards.get(rule.action), current, loaded.env);
-          return registry.actions[rule.action].run(current, {
+          return aroundRuleAction({ section: section.name, rule: rule.id }, current, () => registry.actions[rule.action].run(current, {
             params: filledParams(rule, loaded.templated.get(rule.action), { ws: current, ...selectedBinding(match) }, loaded.env),
             deps,
             ...(match.data?.selected && { selected: match.data.selected }),
-          });
+          }));
         }],
       })),
     };
@@ -97,7 +130,7 @@ function placeholderText(param, { expression, source }, environment, variables) 
   try {
     value = environment.evaluate(expression, variables);
   } catch (error) {
-    throw new Error(`${where}: ${error.message.split('\n')[0]}`, { cause: error });
+    throw new Error(`${where}: ${celMessage(error, variables)}`, { cause: error });
   }
   if (['string', 'number', 'bigint', 'boolean'].includes(typeof value)) return String(value);
   throw new TypeError(`${where}: evaluated to ${kindOf(value)}, expected a string, number or boolean`);
@@ -120,7 +153,12 @@ function kindOf(value) {
 // The action gets the item and its index; the trace gets the index alone (`detail`).
 function selectFirstMatch(rule, ws, holds) {
   const { name, expression, env } = rule.selectFirst;
-  const items = env.evaluate(expression, { ws });
+  let items;
+  try {
+    items = env.evaluate(expression, { ws });
+  } catch (error) {
+    throw new Error(`selectFirst: ${celMessage(error, { ws })}`, { cause: error });
+  }
   if (!Array.isArray(items)) throw new TypeError(`selectFirst evaluated to ${celTypeOf(items)}, expected a list`);
   const index = items.findIndex((item, position) => holdsFor(item, position));
   function holdsFor(item, position) {
@@ -143,7 +181,7 @@ function guardHolds(action, guard, ws, env) {
   try {
     result = env.evaluate(guard, { ws });
   } catch (error) {
-    throw new Error(`${where}: ${error.message.split('\n')[0]}`, { cause: error });
+    throw new Error(`${where}: ${celMessage(error, { ws })}`, { cause: error });
   }
   if (typeof result !== 'boolean') throw new TypeError(`${where}: evaluated to ${celTypeOf(result)}, expected a boolean`);
   return result;

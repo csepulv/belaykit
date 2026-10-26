@@ -1,6 +1,6 @@
 {
   "name": "doc-processor",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "BelayKit's example agent: extract a document's snippets, place each in a topic map and type it — written with and without a rulebook.",
   "private": true,
   "license": "MIT",

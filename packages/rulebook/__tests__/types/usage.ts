@@ -4,7 +4,7 @@
 import { Agent, always, chain } from '@belaykit/core';
 import { describeFunctions, loadFixture, Rulebook, schemaVersions, version } from '@belaykit/rulebook';
 import type {
-  ActionContext, Decision, Fixture, FixtureRun, JsonSchema, Producer, RegisteredAction, RegisteredFunction, Registry, Rule,
+  ActionContext, DecidedBy, Decision, Fixture, FixtureRun, JsonSchema, Producer, RegisteredAction, RegisteredFunction, Registry, Rule,
   RulebookTextOptions, Section, SelectedItem, WorkingSet,
 } from '@belaykit/rulebook';
 
@@ -41,8 +41,21 @@ export const macroFileProblems: string[] = Rulebook.checkMacros('version: 1\nmac
 export const macroFileWithoutRegistry: string[] = Rulebook.checkMacros('version: 1\nmacros: {}\n');
 // @ts-expect-error baseDir is a folder's path, a string
 export const numericBaseDir: Rulebook = Rulebook.fromText('version: 1\nsections: []\n', registry, { baseDir: 3 });
-// @ts-expect-error the text entry points take baseDir only
+// @ts-expect-error the text entry points take baseDir or imports only
 export const unknownTextOption: string[] = Rulebook.check('version: 1\nsections: []\n', registry, { basedir: 'rules' });
+
+// A bundle: the macro files as text, by the paths the rulebook imports them by.
+const bundled: RulebookTextOptions = { imports: { 'common.macros.yaml': 'version: 1\nmacros: {}\n' } };
+export const fromBundle: Rulebook = Rulebook.fromText('version: 1\nimports: [common.macros.yaml]\nsections: []\n', registry, bundled);
+export const bundleProblems: string[] = Rulebook.checkMacros('version: 1\nmacros: {}\n', registry, bundled);
+// A macro file's check may say where the file sits, so an import back to it is a cycle.
+export const placedProblems: string[] = Rulebook.checkMacros('version: 1\nmacros: {}\n', registry, { imports: {}, path: 'a.macros.yaml' });
+// @ts-expect-error only a macro file's check takes a path
+export const placedRulebook: string[] = Rulebook.check('version: 1\nsections: []\n', registry, { imports: {}, path: 'a.rules.yaml' });
+// @ts-expect-error one source of files: a folder or the files as text, not both
+export const bothSources: string[] = Rulebook.check('version: 1\nsections: []\n', registry, { baseDir: 'rules', imports: {} });
+// @ts-expect-error a file given as text is a string
+export const numericImport: string[] = Rulebook.check('version: 1\nsections: []\n', registry, { imports: { 'a.macros.yaml': 1 } });
 
 export const sections: readonly Section[] = rulebook.sections;
 export const rules: Rule[] = rulebook.sections.flatMap((section) => section.rules);
@@ -91,14 +104,32 @@ export const recheck: RegisteredAction<Deps> = { run: async (ws) => rulebook.reg
 // A decision: the outputs once completed, a reason otherwise.
 export async function describeDecision(): Promise<string> {
   const decision: Decision = await rulebook.decide({ item: 'x' }, { deps: { findRow: async () => null }, maxIterations: 10 });
-  if (decision.status === 'completed') return JSON.stringify(decision.outputs);
+  if (decision.status === 'completed') {
+    const decided: DecidedBy | undefined = decision.decidedBy.routing;
+    return `${JSON.stringify(decision.outputs)} by ${decided?.section}/${decided?.rule} in ${decided?.iteration}`;
+  }
   // @ts-expect-error only a completed decision has outputs
   const outputs = decision.outputs;
-  return `${decision.status}: ${decision.error} ${outputs}`;
+  // @ts-expect-error only a completed decision says which rule decided each output
+  const decidedBy = decision.decidedBy;
+  // Every decision shows its evidence, a failed one included.
+  const evidence: Record<string, unknown> = decision.evidence;
+  return `${decision.status}: ${decision.error} ${outputs} ${decidedBy} ${Object.keys(evidence)}`;
 }
 
-// @ts-expect-error decide takes deps and maxIterations, not a tracer
+export async function completedEvidence(): Promise<unknown> {
+  const decision = await rulebook.decide({ item: 'x' });
+  return decision.status === 'completed' ? decision.evidence.existing_row : null;
+}
+
+// @ts-expect-error decide takes deps, maxIterations and onCopyLoss, not a tracer
 export const decidedWithTracer = rulebook.decide({}, { tracer: false });
+
+// What a copy leaves out without an error is dropped (the default), or fails the decision.
+export const decidedDropping = rulebook.decide({}, { onCopyLoss: 'drop' });
+export const decidedStrictly = rulebook.decide({}, { onCopyLoss: 'fail' });
+// @ts-expect-error onCopyLoss is 'drop' or 'fail'
+export const decidedLeniently = rulebook.decide({}, { onCopyLoss: 'lenient' });
 
 // @ts-expect-error a rulebook is made by load or fromText
 export const constructed = new Rulebook();

@@ -38,7 +38,8 @@ the action doesn't template, and `selectFirst` bindings: a name that is `ws`, `b
 registered function's, a list expression whose type is known and isn't a list, and a binding used outside its rule;
 a `FIRST` section with rules that neither ends in a rule with `when: "true"` (without `selectFirst`, on an action
 without a `guard`) nor says `exhaustive: false`, and `exhaustive` where it means nothing; `outputs` that no action
-writes or that gathering would set (a `needs` key, a producer's `writes`); the `guard` of each action a rule names,
+writes or that gathering would set (a `needs` key, a producer's `writes`); `evidence` without `outputs`, or naming an
+output or a key nothing declares (since 0.4); the `guard` of each action a rule names,
 checked like a `when` and reported once per action.
 The registry's own problems are listed too: an unknown key (in the registry, on a producer or on an action), a
 function that won't register, a `params` or shape schema that won't compile, `templates` that don't name plain-string
@@ -50,7 +51,8 @@ the macro (`macro "x" (<file>): …`); one that comes through a call's arguments
 (`… when, in macro "x": …`). A macro nothing calls is still checked for its own name, params, the names it reads and
 the macros it calls, but its body isn't compiled against the registry's functions, keys and shapes;
 [`Rulebook.checkMacros`](#rulebookcheckmacrostext-registry-options) checks a whole file against them. Refused too:
-- a missing or unreadable macro file, or a cycle of imports;
+- a missing or unreadable macro file (with `{ imports }`, one the map doesn't hold, or an absolute path), or a cycle
+  of imports;
 - a macro name defined in two files, or one that CEL, a registered function, `belaykit`, `cel` or a CEL reserved word
   already has;
 - a param whose name a `selectFirst` binding couldn't have, or that the body never uses;
@@ -70,8 +72,9 @@ not from the calling module. A `path` that isn't a string is a `TypeError`.
 static fromText(text: string, registry: Registry<any>, options?: RulebookTextOptions): Rulebook;
 ```
 
-The same, from text; its imports resolve from `options.baseDir`. `text` that isn't a string, an option it doesn't
-take, or a `baseDir` that isn't a string is a `TypeError`.
+The same, from text; its imports resolve from `options.baseDir`, or come as text in `options.imports` (since 0.4).
+`text` that isn't a string, an option it doesn't take, a `baseDir` that isn't a string, both options at once, or an
+`imports` map [`RulebookTextOptions`](#rulebooktextoptions) refuses is a `TypeError`.
 
 #### `Rulebook.check(text, registry, options)`
 
@@ -87,7 +90,7 @@ file, it says so, and to use `Rulebook.checkMacros`.
 #### `Rulebook.checkMacros(text, registry, options)`
 
 ```ts
-static checkMacros(text: string, registry: Registry<any>, options?: RulebookTextOptions): string[];
+static checkMacros(text: string, registry: Registry<any>, options?: RulebookTextOptions & { path?: string }): string[];
 ```
 
 Since 0.3: every problem in a macro file's text, against `registry`; `[]` when it's clean. Each macro in the file is
@@ -95,10 +98,18 @@ checked as a rulebook calling it would check it, whether or not one does: its na
 its body against the registry's functions, keys and shapes. A macro file has no `needs`, so the keys it knows are the
 ones the registry names: `initialKeys`, any action's or producer's `writes`, and the keys of `shapes`. A key only a
 rulebook's `needs` declares is reported as unknown; declare it in its producer's `writes`. A param stands for any
-value, so a field read through one is checked where the macro is called. Imports resolve from `options.baseDir` (without
-it, they are a problem and aren't read, and the file's own macros are still checked), and an
-imported file's macros are checked as far as this file's macros call them; check that file to check the rest. The
-file's own problems name the macro without a file (`macro "x": …`), and the registry's own problems are listed too.
+value, so a field read through one is checked where the macro is called. Imports resolve from `options.baseDir`, or
+come from `options.imports`, relative to this file (without either, they are a problem and aren't read, and the
+file's own macros are still checked), and an
+imported file's macros are checked as far as this file's macros call them; check that file to check the rest. Since
+0.4, `options.path` says where the file sits, relative to `baseDir` or to the imports' paths: its imports then resolve
+from its own folder, and an import that leads back to it is a cycle (`imports form a cycle: a.macros.yaml ->
+b.macros.yaml -> a.macros.yaml`), as `belaykit-rulebook check` reports one. Without it, text has no place, so such an
+import reads the file again: its macros are reported as defined in both, and the cycle is reported from the imported
+file. A `path` without `baseDir` or `imports`,
+or one that isn't a file's (`.`), or one whose `imports` entry holds other text than the checked file, is a
+`TypeError`. The file's own problems name the macro without a file (`macro "x": …`), and the registry's own problems
+are listed too.
 Given a rulebook, it says so, and to use `Rulebook.check`. It throws as `Rulebook.check` does.
 
 #### `rulebook.sections`, `rulebook.declaredKeys`
@@ -176,39 +187,75 @@ option it doesn't take, or without `fixture` or `finishChecker`.
 #### `rulebook.decide(initial, options)`
 
 ```ts
-decide(initial?: Record<string, unknown>, options?: { deps?: unknown; maxIterations?: number }): Promise<Decision>;
+decide(initial?: Record<string, unknown>, options?: { deps?: unknown; maxIterations?: number; onCopyLoss?: 'drop' | 'fail' }): Promise<Decision>;
 ```
 
 The rulebook as a decision function ([Deciding with a rulebook](../rulebooks.md#deciding-with-a-rulebook)): a run on
 the core's `Agent`, from `initialize(initial)`, until every key in the rulebook's `outputs` is present. Always resolves;
 an output or `needs` key already present in `initial` fails the run, naming it. `deps` reach producers and actions;
-`maxIterations` bounds the run (default 25). The trace is the default one. Rejects with a `TypeError` when the
-rulebook declares no `outputs`, for an option it doesn't take, or for an option's bad value (`maxIterations: 0`).
+`maxIterations` bounds the run (default 25). Since 0.4, `onCopyLoss` says what happens to a key that a copy of an
+output or evidence value leaves out without an error: `'drop'` (the default) leaves it out, and `'fail'` fails the
+decision, naming it. The trace is the default one. Rejects with a `TypeError` when the rulebook declares no
+`outputs`, for an option it doesn't take, or for an option's bad value (`maxIterations: 0`, `onCopyLoss: 'strict'`).
+What it resolves to, its copies, `decidedBy` and `evidence` included, is a [`Decision`](#decision).
 
 ### `RulebookTextOptions`
 
 ```ts
-interface RulebookTextOptions {
-  baseDir?: string;   // where the rulebook's imports resolve from
-}
+type RulebookTextOptions =
+  | { baseDir?: string; imports?: never }                    // where the rulebook's imports resolve from
+  | { baseDir?: never; imports: Record<string, string> };   // the macro files as text, by path (since 0.4)
 ```
 
 How a rulebook given as text is read (since 0.3). A file's imports resolve from its own folder; text has none, so
-`baseDir` stands in for it, and a relative `baseDir` is resolved from the current directory (`process.cwd()`). Text
-with `imports` and no `baseDir` is a load problem.
+`baseDir` stands in for it, and a relative `baseDir` is resolved from the current directory (`process.cwd()`). Or,
+since 0.4, `imports` holds the macro files themselves, so nothing is read from disk (a bundle, say): each key is a
+path as `imports:` writes it, relative to the text it comes with (the rulebook, or for `checkMacros` the macro file),
+and a file's own imports resolve relative to that file, as on disk; `./a.macros.yaml`, `x/../a.macros.yaml` and
+`a.macros.yaml/` are one file, and a path may climb above the text's folder (`../shared/a.macros.yaml`), so any
+folder's layout can be given as text. An import the map doesn't hold is a load problem (`not among the given
+imports`), and so is an absolute one. The two options can't be given together; `imports` must be a plain object (for
+a `Map`, pass `Object.fromEntries(map)`), and a value that isn't a string, two keys naming one file, or an absolute key
+or one naming a folder (`.`, `..`) is a `TypeError`. Text with `imports:` and neither option is a load problem.
+In 0.3 this was an `interface`; it's a type now, so code that `extends` it uses an intersection (`&`) instead.
 
 ### `Decision`
 
 ```ts
 type Decision =
-  | { status: 'completed'; outputs: Record<string, unknown>; trace: TraceEntry[] }
-  | { status: 'no_match' | 'failed'; error: string; trace: TraceEntry[] };
+  | { status: 'completed'; outputs: Record<string, unknown>; decidedBy: Record<string, DecidedBy>; evidence: Record<string, unknown>; trace: TraceEntry[] }
+  | { status: 'no_match' | 'failed'; error: string; evidence: Record<string, unknown>; trace: TraceEntry[] };
 ```
 
-What `decide` resolves to. `completed`: every output is present, with its value in `outputs`. `no_match`: nothing
+What `decide` resolves to. Every decision has `evidence` (since 0.4): the rulebook's `evidence` keys present when the
+run ended, `null` included and absent ones left out, so `{}` when it declares none or the initializer failed. Outputs
+and evidence are copies of plain data, made with `structuredClone`; a value that can't be copied makes the decision
+`failed`, naming where it is: a class instance anywhere inside it, built-ins such as `Error`, `URL` and `Buffer`
+included (a copy would drop its class, private fields and getters), a function, a symbol, a getter that throws. An
+evidence key that can't be copied is left out of `evidence`. What a copy loses without an error (a symbol key, a key
+that isn't enumerable, an own key on a `Map`, `Set`, `Date`, `RegExp` or buffer, a `RegExp`'s non-zero `lastIndex`,
+which a copy resets to 0) is let go, or with `onCopyLoss: 'fail'` makes the decision `failed` too. The run's own message, if it had one, comes first.
+`completed`: every output is present, with its value in `outputs` and the rule that decided it in `decidedBy` (since
+0.4); an output that no rule's action set (something else wrote it, such as a producer beyond the key it gathers)
+makes the decision `failed` instead, naming it, and so does one present when a run ends `no_match`. `no_match`: nothing
 applied (no section claimed the working set, or one claimed and no rule held); `error` names the unset outputs and the
 sections as the provider asked them (those before the claiming one, that one, and the rest as not reached). `failed`:
-something broke; `error` is the run's own message.
+something broke; `error` is the run's own message, then `decide`'s own problems (an output no rule decided, a value
+that can't be copied), joined by `; `.
+
+### `DecidedBy`
+
+```ts
+interface DecidedBy {
+  section: string;     // the section's name
+  rule: string;        // the rule's id, or <section>#<n>: its choice's name in the trace
+  iteration: number;   // the iteration its action ran in
+}
+```
+
+The rule that decided an output (since 0.4): the last rule whose action gave it a new value, by `Object.is`. Writing
+the value the output already holds, or a change inside it, such as a push into a list it holds, isn't a new value.
+Every output of a completed decision has one: a decision whose output was set some other way is `failed`.
 
 ### `Section`
 

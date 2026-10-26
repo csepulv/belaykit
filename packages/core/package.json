@@ -1,6 +1,6 @@
 {
   "name": "@belaykit/core",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "BelayKit's agent loop and provider composition: a bounded loop for focused agents, with no dependencies.",
   "license": "MIT",
   "author": "Christian Sepulveda <dev@justideas.io>",

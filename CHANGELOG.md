@@ -6,6 +6,47 @@ at the same version. The layout follows [Keep a Changelog](https://keepachangelo
 [Upgrading](documentation/upgrading.md) says what to do for each change that can stop code written for an earlier
 version.
 
+## 0.4.0 - 2026-10-25
+
+Upgrade all three together: `@belaykit/rulebook` 0.4 takes `@belaykit/core` 0.4 as its peer, and `belaykit` 0.4
+depends on it. The core and `belaykit` change only their version.
+
+### Added
+
+- **`decidedBy`** on a completed `rulebook.decide`: for each output, the section, rule and iteration of the last rule
+  whose action gave it a new value (`DecidedBy`). An output no rule's action set (something else wrote it, such as a
+  producer beyond the key it gathers) makes the decision `failed`. See
+  [Deciding with a rulebook](documentation/rulebooks.md#deciding-with-a-rulebook).
+- **`evidence:`** in a rulebook with `outputs`: working-set keys every decision returns in `evidence`, `failed` and
+  `no_match` included, as the run left them (a `null` included, an absent key left out). Checked at load: each must be
+  declared, and not an output.
+- **`{ imports }`** on `Rulebook.fromText`, `Rulebook.check` and `Rulebook.checkMacros`: the macro files as text, by
+  the paths the rulebook imports them by, so a bundle loads without a disk. See [Macros](documentation/rulebooks.md#macros).
+- **`{ path }`** on `Rulebook.checkMacros`: where the checked file sits, so its imports resolve from its folder and an
+  import that leads back to it is reported as a cycle, as the `belaykit-rulebook check` command reports it.
+- **`{ onCopyLoss }`** on `rulebook.decide`: what happens to what a copy loses without an error (a symbol key, a key
+  that isn't enumerable, an own key on a `Map`, `Set`, `Date`, `RegExp` or buffer, a `RegExp`'s non-zero `lastIndex`,
+  which a copy resets to 0): `'drop'`, the default, lets it go; `'fail'` makes the decision `failed`, naming it.
+
+### Changed
+
+- **`rulebook.decide` returns copies** of outputs and evidence (`structuredClone`), so changing them doesn't change the
+  working set. They must be plain data: a value that can't be copied (a class instance anywhere inside it, built-ins
+  such as `Error`, `URL` and `Buffer` included, a function or a symbol, a getter that throws) makes the decision
+  `failed`, naming where it is, and a key a copy leaves out is dropped (see `onCopyLoss`). See
+  [Upgrading](documentation/upgrading.md#from-03-to-04).
+- **An output no rule decided fails the decision:** an output written by something other than a rule's action, which
+  0.3 accepted, makes a completed or `no_match` decision `failed`.
+- **A value CEL can't read is named:** where cel-js said `Unsupported type: Site`, a run's message now says where
+  the value is (`ws.site is an instance of Site, which CEL can't read …`).
+- **A failing `selectFirst` list is named, in one line:** the run's message starts `selectFirst:` and leaves out the
+  source excerpt cel-js's message had in 0.3. See [Upgrading](documentation/upgrading.md#from-03-to-04).
+- **`RulebookTextOptions` is a type, not an interface,** so TypeScript refuses `baseDir` and `imports` together, and
+  an `interface X extends RulebookTextOptions` no longer compiles.
+- **Two messages name `imports` too:** text with `imports:` and no source now ends "pass { baseDir } or
+  { imports }", and an unknown option lists `(options: baseDir, imports)` (for `Rulebook.checkMacros`,
+  `(options: baseDir, imports, path)`).
+
 ## 0.3.0 - 2026-10-24
 
 Upgrade all three together: `@belaykit/rulebook` 0.3 takes `@belaykit/core` 0.3 as its peer, and `belaykit` 0.3

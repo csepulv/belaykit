@@ -87,7 +87,7 @@ describe('Rulebook.checkMacros: every macro in a file, against a registry', () =
     const text = macroFile({ isReady: '!isBusy()', isStale: 'size(ws.itmes) > 0' }, ['./more.macros.yaml']);
 
     expect(Rulebook.checkMacros(text, registry())).toEqual([
-      'imports: a macro file read from text resolves its imports from a folder; pass { baseDir }',
+      'imports: a macro file read from text resolves its imports from a folder; pass { baseDir } or { imports }',
       'unknown function "isBusy", used in 1 expression (an import above has a problem)',
       `macro "isStale": unknown ws field "itmes"${HINT}`,
     ]);
@@ -164,7 +164,7 @@ describe('Rulebook.checkMacros: every macro in a file, against a registry', () =
 
   test('it takes the options fromText and check take', () => {
     expect(() => Rulebook.checkMacros(macroFile({ isOld: 'true' }), registry(), { basedir: '.' }))
-      .toThrow(new TypeError('Rulebook.checkMacros: unknown option "basedir" (options: baseDir)'));
+      .toThrow(new TypeError('Rulebook.checkMacros: unknown option "basedir" (options: baseDir, imports, path)'));
     expect(() => Rulebook.checkMacros(3, registry())).toThrow(new TypeError('Rulebook.checkMacros: text must be a string'));
   });
 });

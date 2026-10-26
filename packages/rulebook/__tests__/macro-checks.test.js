@@ -119,7 +119,7 @@ describe('a call\'s problems, reported where it is', () => {
       'unknown function "isGone", used in 1 expression (an import above has a problem)',
     ]);
     expect(Rulebook.check(text, registry())).toEqual([
-      'imports: a rulebook read from text resolves its imports from a folder; pass { baseDir }',
+      'imports: a rulebook read from text resolves its imports from a folder; pass { baseDir } or { imports }',
       'unknown function "isGone", used in 1 expression (an import above has a problem)',
     ]);
   });

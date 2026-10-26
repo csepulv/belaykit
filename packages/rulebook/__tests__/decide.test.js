@@ -170,6 +170,6 @@ sections:
   test('a rulebook without outputs, or an option decide doesn\'t take, is a TypeError', async () => {
     const plain = Rulebook.fromText(TRIAGE().replace('outputs: [routing, reason]\n', ''), registry);
     await expect(plain.decide({ item: 'x' })).rejects.toThrow(new TypeError('rulebook.decide: this rulebook declares no outputs'));
-    await expect(rules.decide({ item: 'x' }, { tracer: false })).rejects.toThrow(new TypeError('rulebook.decide: unknown option "tracer" (options: deps, maxIterations)'));
+    await expect(rules.decide({ item: 'x' }, { tracer: false })).rejects.toThrow(new TypeError('rulebook.decide: unknown option "tracer" (options: deps, maxIterations, onCopyLoss)'));
   });
 });

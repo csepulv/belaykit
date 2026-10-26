@@ -61,7 +61,7 @@ function printReference(files, registry) {
 // (since 0.3); `reference` takes a rulebook only.
 function problemsIn(file, registry, check = checkRulebook) {
   try {
-    return check(readFileSync(file, 'utf-8'), registry, { baseDir: dirname(resolve(file)), path: file });
+    return check(readFileSync(file, 'utf-8'), registry, { baseDir: dirname(resolve(file)), path: resolve(file) });
   } catch (error) {
     if (error.code === 'ENOENT') return ['no such file'];
     if (error.code) return [`cannot read (${error.code})`];

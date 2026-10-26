@@ -67,7 +67,7 @@ completed [ 'urgent' ]
 
 ## Status
 
-0.3. The API may change before 1.0, but changes will be deliberate, and each is listed in the
+0.4. The API may change before 1.0, but changes will be deliberate, and each is listed in the
 [changelog](CHANGELOG.md), with what to do in [Upgrading](documentation/upgrading.md).
 
 ## License
